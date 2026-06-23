@@ -245,8 +245,7 @@ def procesar_documentos(banco: dict,
                 break
             continue
         try:
-            resultado = registrar_factura(banco, primer_ingreso=primer_ingreso_fb60)
-            primer_ingreso_fb60 = False   # a partir del 2º FB60 usa ruta normal
+            resultado = registrar_factura(banco)
             procesados.append({"doc": doc_id, **resultado})
             print(f"    ✓ Doc SAP: {resultado['sap_doc']}")
             _log.info("Procesado %s → Doc SAP: %s", doc_id, resultado['sap_doc'])
@@ -343,7 +342,7 @@ def _abrir_fb60_teclado(fila_idx: int) -> bool:
         SAP.esperar_titulo("Registrar factura", timeout=3)
         return True
     except RuntimeError:
-        _log.error("No se abrió FB60 via teclado. Pantalla actual: %r", SAP.titulo_actual())
+        _log.debug("FB60 no se abrió (grilla vacía o timeout). Pantalla: %r", SAP.titulo_actual())
         return False
     
     

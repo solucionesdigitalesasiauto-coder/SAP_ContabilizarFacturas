@@ -39,7 +39,7 @@ def _pegar(valor: str) -> None:
     time.sleep(0.25)
 
 
-def registrar_factura(banco: dict, primer_ingreso: bool = False) -> dict:
+def registrar_factura(banco: dict) -> dict:
     """Completa el formulario FB60 para una factura.
 
     Args:
@@ -67,7 +67,7 @@ def registrar_factura(banco: dict, primer_ingreso: bool = False) -> dict:
     _llenar_fecha_contabilizacion(fecha_capturada)
     _marcar_calc_impuestos()
     _ingresar_indicador_impuesto(ind_impuesto)
-    _llenar_posicion(cuenta_mayor, texto_com, centro_costo, primer_ingreso=primer_ingreso)
+    _posicion_normal(cuenta_mayor, texto_com, centro_costo)
     _salir_tabla_y_limpiar_advertencia()
     _llenar_pestana_pago(via_pago)
     _llenar_pestana_detalle(texto_cab)
@@ -115,24 +115,6 @@ def _ingresar_indicador_impuesto(ind_impuesto: str) -> None:
     SAP.activar()
     SAP.tab(1)
     time.sleep(0.5)
-
-
-def _llenar_posicion(cuenta_mayor: str, texto_com: str, centro_costo: str,
-                     primer_ingreso: bool = False) -> None:
-    """Navega a la tabla de posiciones y llena Cta.mayor, Importe, Texto y Centro Costo."""
-    _posicion_normal(cuenta_mayor, texto_com, centro_costo)
-
-
-def _posicion_primer_ingreso(cuenta_mayor: str, texto_com: str, centro_costo: str) -> None:
-    """Primera apertura de FB60 — Tab(1) aterriza directo en Cta.mayor (tabla fresca)."""
-    SAP.activar()
-    SAP.tab(1)
-    time.sleep(0.2)
-    SAP.tecla('down')
-    time.sleep(0.3)
-    _pegar(cuenta_mayor)
-    time.sleep(0.3)
-    _llenar_resto_posicion(texto_com, centro_costo)
 
 
 def _posicion_normal(cuenta_mayor: str, texto_com: str, centro_costo: str) -> None:
@@ -215,8 +197,10 @@ def _contabilizar_o_cancelar(fecha_capturada: str) -> str:
 def _contabilizar(fecha_capturada: str) -> str:
     SAP.ctrl_s()
     time.sleep(0.8)
-    # Si SAP muestra un diálogo de confirmación antes de efectuar el asiento
-    if any(p in SAP.titulo_actual().lower() for p in ("registrar factura", "ingresar factura")):
+    # Confirmar cualquier popup que aparezca antes de que SAP vuelva a ZFIEC015:
+    # puede ser el diálogo propio de FB60 ("registrar factura") o un popup
+    # de confirmación externo con título diferente.
+    if "recepci" not in SAP.titulo_actual().lower():
         SAP.enter()
         time.sleep(0.5)
     for _ in range(40):   # espera activa hasta 8 s
