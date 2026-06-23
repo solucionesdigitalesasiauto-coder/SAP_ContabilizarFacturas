@@ -238,7 +238,13 @@ def procesar_documentos(banco: dict,
             errores_consec = 0
             _cerrar_fb60_si_abierto()
             time.sleep(0.5)
-            fila_idx += 1
+            # Modo real: el doc contabilizado desaparece de la grilla de pendientes
+            # → el siguiente queda en fila 0; F2 reactiva el foco del grid.
+            # Modo prueba: la grilla no cambia → avanzar al índice siguiente.
+            if resultado.get("sap_doc") == "PRUEBA":
+                fila_idx += 1
+            else:
+                fila_idx = 0
             if max_docs and len(procesados) >= max_docs:
                 _log.info("Límite max_docs=%d alcanzado.", max_docs)
                 break
