@@ -45,7 +45,7 @@ _LOG_PATH = os.path.join(_BASE, "sap_combancos.log")
 try:
     logging.basicConfig(
         filename=_LOG_PATH,
-        level=logging.DEBUG,
+        level=logging.INFO,
         format="%(asctime)s [%(levelname)s] [%(module)s] %(message)s",
         encoding="utf-8",
         force=True,
@@ -55,13 +55,13 @@ except OSError:
     _LOG_PATH = os.path.join(_tmp.gettempdir(), "sap_combancos.log")
     logging.basicConfig(
         filename=_LOG_PATH,
-        level=logging.DEBUG,
+        level=logging.INFO,
         format="%(asctime)s [%(levelname)s] [%(module)s] %(message)s",
         encoding="utf-8",
         force=True,
     )
 _console = logging.StreamHandler()
-_console.setLevel(logging.DEBUG)
+_console.setLevel(logging.INFO)
 _console.setFormatter(logging.Formatter("  [%(levelname)s] %(module)s: %(message)s"))
 logging.getLogger().addHandler(_console)
 _log = logging.getLogger("main")
