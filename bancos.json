@@ -1,0 +1,67 @@
+{
+  "bancos": [
+    {
+      "orden":            2,
+      "nombre":           "AUSTRO",
+      "cuenta_mayor_sap": "1000004754",
+      "cuenta_mayor":     "8110200002",
+      "centro_costo":     "2047001103",
+      "texto_cabecera":   "BANCO DEL AUSTRO",
+      "texto_comision":   "COMISION BANCO AUSTRO"
+    },
+    {
+      "orden":            3,
+      "nombre":           "PACIFICO",
+      "cuenta_mayor_sap": "1000006932",
+      "cuenta_mayor":     "8110200003",
+      "centro_costo":     "2047001103",
+      "texto_cabecera":   "BANCO DEL PACIFICO",
+      "texto_comision":   "COMISION BANCO PACIFICO"
+    },
+    {
+      "orden":            4,
+      "nombre":           "PICHINCHA",
+      "cuenta_mayor_sap": "1000004511",
+      "cuenta_mayor":     "8110200004",
+      "centro_costo":     "2047001103",
+      "texto_cabecera":   "BANCO PICHINCHA",
+      "texto_comision":   "COMISION BANCO PICHINCHA"
+    },
+    {
+      "orden":            1,
+      "nombre":           "GUAYAQUIL",
+      "cuenta_mayor_sap": "1000001661",
+      "cuenta_mayor":     "8110200007",
+      "centro_costo":     "2047001103",
+      "texto_cabecera":   "BANCO DE GUAYAQUIL",
+      "texto_comision":   "COMISION BANCO GUAYAQUIL"
+    },
+    {
+      "orden":            5,
+      "nombre":           "DINERS",
+      "cuenta_mayor_sap": "1000004516",
+      "cuenta_mayor":     "8110200021",
+      "centro_costo":     "2047001103",
+      "texto_cabecera":   "BANCO DINERS",
+      "texto_comision":   "COMISION BANCO DINERS"
+    },
+    {
+      "orden":            6,
+      "nombre":           "BOLIVARIANO",
+      "cuenta_mayor_sap": "1000083356",
+      "cuenta_mayor":     "8110200008",
+      "centro_costo":     "2047001103",
+      "texto_cabecera":   "BANCO BOLIVARIANO",
+      "texto_comision":   "COMISION BANCO BOLIVARIANO"
+    },
+    {
+      "orden":            7,
+      "nombre":           "INTERNACIONAL",
+      "cuenta_mayor_sap": "1000023397",
+      "cuenta_mayor":     "8110200009",
+      "centro_costo":     "2047001103",
+      "texto_cabecera":   "BANCO INTERNACIONAL",
+      "texto_comision":   "COMISION BANCO INTERNACIONAL"
+    }
+  ]
+}

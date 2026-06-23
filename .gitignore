@@ -1,0 +1,17 @@
+# Credenciales y configuración local
+.env
+correos/.env.privado
+
+# Logs
+*.log
+
+# Build / distribución
+release/dist/
+release/build/
+*.exe
+__pycache__/
+*.pyc
+*.pyo
+*.spec
+# No excluir combancos.spec (necesario para el build)
+!release/combancos.spec
