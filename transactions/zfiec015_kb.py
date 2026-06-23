@@ -197,27 +197,24 @@ def procesar_documentos(banco: dict,
                         tipo_doc: str = None,
                         max_docs: int = None):
     """Itera la grilla ZFIEC015 y registra cada factura en FB60.
+
+    Avance lineal: fila_idx sube tras cada documento (sin re-query).
+    El loop termina cuando _abrir_fb60_teclado devuelve False (grilla vacía).
+
     Returns:
         Tupla (lista_procesados, lista_errores).
     """
     global _detener
     _detener = False
     from transactions.fb60_kb import registrar_factura
-    _sociedad  = sociedad  or os.getenv("SAP_SOCIEDAD", "")
-    _tipo_doc  = tipo_doc  or os.getenv("TIPO_DOC_ZFIEC", "")
-    _proveedor = proveedor or banco.get("cuenta_mayor_sap", "")
-    listener           = _iniciar_listener_parada()
-    procesados         = []
-    errores            = []
-    errores_consec     = 0
-    max_errores        = 3
-    fila_idx           = 0
-    primer_ingreso_fb60 = True   # primer FB60 de la sesión usa ruta distinta
-    session        = _get_session()
-    usar_scripting = session is not None
-    modo = "scripting" if usar_scripting else "teclado"
-    _log.info("Procesando grilla ZFIEC015 en modo %s", modo)
-    print(f"    Modo grilla: {modo}  |  ESC para detener.")
+    listener       = _iniciar_listener_parada()
+    procesados     = []
+    errores        = []
+    errores_consec = 0
+    max_errores    = 3
+    fila_idx       = 0
+    _log.info("Procesando grilla ZFIEC015 en modo teclado")
+    print("    Modo grilla: teclado  |  ESC para detener.")
     while True:
         if _detener:
             print("    Proceso detenido por el usuario.")
@@ -230,53 +227,32 @@ def procesar_documentos(banco: dict,
             break
         doc_id = f"fila_{fila_idx + 1}"
         _log.debug("Abriendo %s", doc_id)
-        abierto = (_abrir_fb60_scripting(session, fila_idx)
-                   if usar_scripting
-                   else _abrir_fb60_teclado(fila_idx))
-        if not abierto:
-            if not usar_scripting:
-                _log.info("Grilla vacía (modo teclado) — sin más documentos.")
-                break
-            errores_consec += 1
-            _log.warning("No se abrió FB60 para %s (intento %d)", doc_id, errores_consec)
-            fila_idx = 0
-            if errores_consec >= max_errores:
-                _log.error("Demasiados errores consecutivos — deteniendo banco.")
-                break
-            continue
+        if not _abrir_fb60_teclado(fila_idx):
+            _log.info("Sin más documentos en grilla (fila %d).", fila_idx + 1)
+            break
         try:
             resultado = registrar_factura(banco)
             procesados.append({"doc": doc_id, **resultado})
             print(f"    ✓ Doc SAP: {resultado['sap_doc']}")
             _log.info("Procesado %s → Doc SAP: %s", doc_id, resultado['sap_doc'])
             errores_consec = 0
+            _cerrar_fb60_si_abierto()
+            time.sleep(0.5)
+            fila_idx += 1
             if max_docs and len(procesados) >= max_docs:
                 _log.info("Límite max_docs=%d alcanzado.", max_docs)
-                _cerrar_fb60_si_abierto()
                 break
-            if resultado.get("sap_doc") == "PRUEBA":
-                fila_idx += 1
-            else:
-                fila_idx = 0
-                count = buscar(_proveedor, fecha_desde, fecha_hasta, _sociedad, _tipo_doc)
-                if count == 0:
-                    break
-                session        = _get_session()
-                usar_scripting = session is not None
         except Exception as e:
             _log.error("Error FB60 en %s: %s", doc_id, e, exc_info=True)
             print(f"    ✗ {doc_id}: {e}")
             errores.append({"doc": doc_id, "error": str(e)})
             errores_consec += 1
-            SAP.escape()
-            time.sleep(0.5)
-            SAP.f3()
-            time.sleep(0.5)
-            fila_idx = 0
+            _cerrar_fb60_si_abierto()
+            fila_idx += 1
+            time.sleep(1.0)
             if errores_consec >= max_errores:
                 _log.error("Demasiados errores consecutivos — deteniendo banco.")
                 break
-        time.sleep(0.5)
     try:
         listener.stop()
     except Exception:
