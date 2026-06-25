@@ -19,6 +19,25 @@ _BUILD_DIST  = r"C:\Temp\ComBancos_dist"    # directorio dist PyInstaller
 _EXE_NAME    = "ComBancos.exe"              # nombre del ejecutable generado
 _PREFIX_ZIP  = "ComBancos_v"               # prefijo del archivo ZIP de entrega
 
+# ── Certificado de firma (compartido con gestor_amt) ─────────
+_CERT_DIR  = r"C:\Users\wquintana\OneDrive - ASIAUTO S.A\Documentos\Matriculación\Telegram\gestor_amt"
+_CERT_PFX  = os.path.join(_CERT_DIR, "asiauto_codesign.pfx")
+_CERT_PWD  = os.path.join(_CERT_DIR, "codesign_password.txt")
+
+
+def _encontrar_signtool() -> str | None:
+    """Busca signtool.exe en las rutas típicas del Windows SDK."""
+    import glob
+    patrones = [
+        r"C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe",
+        r"C:\Program Files\Windows Kits\10\bin\*\x64\signtool.exe",
+    ]
+    for p in patrones:
+        resultados = sorted(glob.glob(p), reverse=True)
+        if resultados:
+            return resultados[0]
+    return None
+
 
 def _paso(n, total, texto):
     """Imprime un encabezado numerado para un paso del proceso de build.
@@ -101,7 +120,7 @@ def main():
         os.remove(zip_path)
 
     # ── 1. Compilar ───────────────────────────────────────────
-    _paso(1, 3, "Compilando con PyInstaller")
+    _paso(1, 4, "Compilando con PyInstaller")
     result = subprocess.run(
         [sys.executable, "-m", "PyInstaller", spec_path,
          "--clean",
@@ -115,8 +134,27 @@ def main():
         _error(f"{_EXE_NAME} no fue generado.")
     _ok(f"{_EXE_NAME}  ({os.path.getsize(exe_path) // 1024 // 1024} MB)")
 
-    # ── 2. Armar carpeta de entrega ───────────────────────────
-    _paso(2, 3, "Armando carpeta de entrega")
+    # ── 2. Firmar exe ─────────────────────────────────────────
+    _paso(2, 4, "Firmando exe (SmartScreen)")
+    signtool = _encontrar_signtool()
+    if not signtool:
+        print("        [!] signtool.exe no encontrado — exe sin firmar")
+    elif not os.path.exists(_CERT_PFX):
+        print(f"        [!] Certificado no encontrado: {_CERT_PFX}")
+    else:
+        pwd = open(_CERT_PWD).read().strip()
+        r = subprocess.run(
+            [signtool, "sign", "/f", _CERT_PFX, "/p", pwd,
+             "/fd", "SHA256", "/t", "http://timestamp.digicert.com", exe_path],
+            capture_output=True, text=True
+        )
+        if r.returncode == 0:
+            _ok("Firmado correctamente")
+        else:
+            print(f"        [!] Error al firmar:\n{r.stdout}{r.stderr}")
+
+    # ── 3. Armar carpeta de entrega ───────────────────────────
+    _paso(3, 4, "Armando carpeta de entrega")
     os.makedirs(release_dir)
 
     shutil.copy2(exe_path, release_dir)
@@ -130,10 +168,17 @@ def main():
     else:
         _error(".env no encontrado en la raíz del proyecto — agrega las credenciales SAP.")
 
+    cer_src = os.path.join(_CERT_DIR, "asiauto_codesign.cer")
+    if os.path.exists(cer_src):
+        shutil.copy2(cer_src, release_dir)
+        _ok("asiauto_codesign.cer incluido")
+    else:
+        print("        [!] Certificado .cer no encontrado — el cliente deberá instalarlo manualmente")
+
     _ok("Carpeta de entrega lista")
 
-    # ── 3. Crear ZIP ──────────────────────────────────────────
-    _paso(3, 3, "Creando ZIP")
+    # ── 4. Crear ZIP ──────────────────────────────────────────
+    _paso(4, 4, "Creando ZIP")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for root, _, files in os.walk(release_dir):
             for f in files:

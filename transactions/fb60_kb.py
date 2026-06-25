@@ -1,11 +1,8 @@
 """FB60 — Registro de factura de acreedor (navegación por teclado)."""
 import os
-import re
 import time
 import logging
 import pyperclip
-import win32gui
-import win32con
 from pynput.keyboard import Controller as _KbCtrl, Key as _Key
 
 import sap_gui as SAP
@@ -23,9 +20,10 @@ _TAB_POS_TEXTO      = 6
 _TAB_POS_CCOSTO     = 5
 
 # ── Timings (ajustar si SAP responde más lento) ───────────────
-_SLEEP_CORTO = 0.3   # pausa entre campos
-_SLEEP_MEDIO = 0.5   # pausa entre pasos SAP
-_SLEEP_LARGO = 0.9   # pausa en tabla / salidas lentas
+_SLEEP_MICRO = 0.1   # micro-pausa interna (retry clipboard, pre-paste)
+_SLEEP_CORTO = 0.3   # entre campos / teclas
+_SLEEP_MEDIO = 0.5   # entre pasos SAP
+_SLEEP_LARGO = 0.8   # tabla / salidas lentas
 _SLEEP_POPUP = 2.0   # espera popup Información tras Contabilizar
 
 # ── Títulos y strings SAP ─────────────────────────────────────
@@ -59,12 +57,12 @@ def _pegar(valor: str) -> None:
     for _ in range(5):
         if pyperclip.paste() == texto:
             break
-        time.sleep(0.05)
-    time.sleep(0.1)
+        time.sleep(_SLEEP_MICRO)
+    time.sleep(_SLEEP_MICRO)
     with _kbd.pressed(_Key.ctrl):
         _kbd.press('v')
         _kbd.release('v')
-    time.sleep(0.25)
+    time.sleep(_SLEEP_CORTO)
 
 
 def registrar_factura(banco: dict) -> dict:
@@ -110,23 +108,39 @@ def registrar_factura(banco: dict) -> dict:
     SAP.activar(_TITULO_FB60)
     time.sleep(_SLEEP_LARGO)         # SAP necesita renderizar el form antes de tabular
 
+    def _t(label: str, t0: float) -> float:
+        t1 = time.time()
+        _log.info("  %-30s %.2fs", label, t1 - t0)
+        return t1
+
+    t = time.time()
     fecha_capturada = _copiar_fecha_factura()
+    t = _t(f"fecha_factura → {fecha_capturada!r}", t)
     time.sleep(_SLEEP_CORTO)
     _llenar_fecha_contabilizacion(fecha_capturada)
+    t = _t(f"fecha_contabilizacion ← {fecha_capturada!r}", t)
     time.sleep(_SLEEP_CORTO)
     _marcar_calc_impuestos()
+    t = _t("calc_impuestos ✓", t)
     time.sleep(_SLEEP_CORTO)
-    _ingresar_indicador_impuesto(ind_impuesto)
+    _ingresar_impuestoB2(ind_impuesto)
+    t = _t(f"indicador_impuesto ← {ind_impuesto!r}", t)
     time.sleep(_SLEEP_CORTO)
     _posicion_normal(cuenta_mayor, texto_com, centro_costo)
+    t = _t(f"posicion_normal ← cta={cuenta_mayor!r} cc={centro_costo!r}", t)
     time.sleep(_SLEEP_CORTO)
     _salir_tabla_y_limpiar_advertencia()
+    t = _t("salir_tabla ✓", t)
     time.sleep(_SLEEP_CORTO)
     _llenar_pestana_pago(via_pago)
+    t = _t(f"pestana_pago ← {via_pago!r}", t)
     time.sleep(_SLEEP_CORTO)
     _llenar_pestana_detalle(texto_cab)
+    t = _t(f"pestana_detalle ← {texto_cab!r}", t)
+    time.sleep(_SLEEP_CORTO)
 
     nro = _contabilizar_o_cancelar(fecha_capturada)
+    _t(f"contabilizar → {nro!r}", t)
     return {
         "sap_doc":      nro,
         "fecha":        fecha_capturada,
@@ -237,10 +251,10 @@ def _posicion_normal(cuenta_mayor: str, texto_com: str, centro_costo: str) -> No
     time.sleep(_SLEEP_MEDIO)
     _pegar(cuenta_mayor)
     time.sleep(_SLEEP_CORTO)
-    _llenar_resto_posicion(texto_com, centro_costo)
+    _llenar_resto_tabla(texto_com, centro_costo)
 
 
-def _llenar_resto_posicion(texto_com: str, centro_costo: str) -> None:
+def _llenar_resto_tabla(texto_com: str, centro_costo: str) -> None:
     """Llena Importe, Texto y Centro Costo en la posición contable activa.
 
     Continúa desde Cta.mayor con tabulación: Importe (_TAB_POS_IMPORTE tabs),
@@ -259,12 +273,12 @@ def _llenar_resto_posicion(texto_com: str, centro_costo: str) -> None:
     SAP.tab(_TAB_POS_IMPORTE)
     SAP.activar()
     _pegar(_IMPORTE_AUTO)
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
 
     SAP.tab(_TAB_POS_TEXTO)
     SAP.activar()
     _pegar(texto_com)
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
 
     SAP.tab(_TAB_POS_CCOSTO)
     SAP.escribir(centro_costo)
@@ -356,98 +370,6 @@ def _contabilizar_o_cancelar(fecha_capturada: str) -> str:
     return _cancelar(fecha_capturada)
 
 
-def _leer_barra_fb60() -> str:
-    """Lee el mensaje de la barra de estado de FB60 via pywinauto UIA.
-
-    Conecta a la ventana 'Registrar factura de acreedor' y lee el primer
-    Edit del Footer (barra de estado de SAP donde aparece el resultado).
-
-    Returns:
-        str: Texto de la barra de estado, o "" si no se pudo leer.
-    """
-    try:
-        from pywinauto import Application
-        app = Application(backend="uia").connect(
-            title_re=".*Registrar factura de acreedor.*", timeout=1
-        )
-        ventana = app.window(title_re=".*Registrar factura de acreedor.*")
-        footer  = ventana.child_window(title="Footer", control_type="Pane")
-        barra   = footer.child_window(control_type="Edit", found_index=0)
-        return barra.window_text().strip()
-    except Exception as e:
-        _log.debug("No se pudo leer barra de estado FB60: %s", e)
-        return ""
-
-
-def _leer_popup_informacion() -> str:
-    """Detecta el popup 'Información' que SAP muestra tras contabilizar.
-
-    Es una ventana top-level (no hijo de FB60). Contiene el texto
-    'Doc.XXXX se contabilizó en sociedad XXXX'. Lo cierra con Enter.
-
-    Returns:
-        str: Texto del popup si fue detectado y cerrado, "" si no existe.
-    """
-    hwnds = []
-    def _enum(hwnd, _):
-        if win32gui.IsWindowVisible(hwnd) and "Informaci" in win32gui.GetWindowText(hwnd):
-            hwnds.append(hwnd)
-    win32gui.EnumWindows(_enum, None)
-    if not hwnds:
-        return ""
-    hwnd = hwnds[0]
-    textos = []
-    def _enum_hijos(h, _):
-        t = win32gui.GetWindowText(h)
-        if t.strip():
-            textos.append(t.strip())
-    win32gui.EnumChildWindows(hwnd, _enum_hijos, None)
-    msg = " ".join(textos) or win32gui.GetWindowText(hwnd)
-    # Solo es el popup correcto si contiene "contabiliz" — evita falsos positivos HTML
-    if "contabiliz" not in msg.lower():
-        return ""
-    _log.info("Popup Información detectado: %r — cerrando con Enter", msg)
-    win32gui.PostMessage(hwnd, win32con.WM_KEYDOWN, win32con.VK_RETURN, 0)
-    time.sleep(0.1)
-    win32gui.PostMessage(hwnd, win32con.WM_KEYUP, win32con.VK_RETURN, 0)
-    time.sleep(_SLEEP_CORTO)
-    return msg
-
-
-def _esperar_barra_estado(timeout: float) -> str:
-    """Espera activa hasta que SAP confirme la contabilización.
-
-    Sondea cada 0.3s buscando en orden:
-    1. Popup 'Información' (ventana hija de FB60) — contiene el nro de doc.
-    2. Barra de estado Footer Edit[0] de FB60.
-    3. Título cambia a ZFIEC015 → contabilización completada.
-    4. Otro título → diálogo inesperado → Enter para descartarlo.
-
-    Returns:
-        str: Texto con el nro de doc, "" si SAP salió de FB60 o timeout.
-    """
-    t0 = time.time()
-    while time.time() - t0 < timeout:
-        titulo = SAP.titulo_actual()
-        if _TITULO_FB60.lower() in titulo.lower():
-            msg = _leer_popup_informacion()
-            if msg:
-                return msg
-            msg = _leer_barra_fb60()
-            if msg:
-                _log.info("Barra de estado FB60: %r", msg)
-                return msg
-        elif "Recepci" in titulo and "documentos" in titulo:
-            _log.info("SAP regresó a ZFIEC015 — contabilización completada")
-            return ""
-        else:
-            _log.info("Diálogo post-Ctrl+S: %r — Enter para confirmar", titulo)
-            SAP.enter()
-        time.sleep(_SLEEP_CORTO)
-    _log.warning("Timeout %.0fs esperando confirmación FB60", timeout)
-    return ""
-
-
 def _contabilizar(fecha_capturada: str) -> str:
     """Guarda la factura, omite advertencias y captura el popup Información.
 
@@ -535,62 +457,3 @@ def _cancelar(fecha_capturada: str) -> str:
     _log.info("_cancelar: título final = %r", SAP.titulo_actual())
     _log.info("FB60 cancelado (modo prueba) — Fecha: %s", fecha_capturada)
     return "PRUEBA"
-
-
-def _capturar_numero_doc() -> str:
-    """Lee el número de documento tras contabilizar.
-
-    Tras Ctrl+S, SAP puede volver directamente a ZFIEC015 (sin popup)
-    o mostrar un popup de confirmación. Solo presiona Enter si hay popup;
-    si ya estamos en ZFIEC015 el Enter es espurio y desestabiliza el loop.
-
-    Returns:
-        str: Número de documento SAP o "???" si no se pudo capturar.
-
-    Hardcoded:
-        - 5: reintentos lectura portapapeles (NÚMERO MÁGICO)
-        - "recepci": fragmento de título ZFIEC015 para detectar pantalla (STRING)
-    """
-    time.sleep(0.2)
-    titulo = SAP.titulo_actual()
-
-    pyperclip.copy("")
-    with _kbd.pressed(_Key.ctrl):
-        _kbd.press('c')
-        _kbd.release('c')
-    for _ in range(5):
-        if pyperclip.paste():
-            break
-        time.sleep(0.05)
-    cuerpo = pyperclip.paste().strip()
-
-    nro = _extraer_numero(cuerpo) or _extraer_numero(titulo)
-
-    # Cerrar popup solo si SAP NO volvió ya a la grilla ZFIEC015
-    if "recepci" not in titulo.lower():
-        SAP.enter()
-        time.sleep(_SLEEP_MEDIO)
-
-    return nro or "???"
-
-
-def _extraer_numero(texto: str) -> str:
-    """Extrae el número de documento SAP de un texto de popup o título.
-
-    Busca el patrón "Doc. XXXX se contabilizó" o un número de 8-12 dígitos.
-
-    Args:
-        texto (str): Texto del popup o título de ventana SAP.
-
-    Returns:
-        str: Número de documento encontrado, o cadena vacía si no se halló.
-
-    Hardcoded:
-        - r"[Dd]oc[\.:\s]+(\w+)\s+se\s+contabiliz": patrón regex SAP (REGEX)
-        - r"\b(\d{8,12})\b": patrón numérico 8-12 dígitos (REGEX)
-    """
-    m = re.search(r"[Dd]oc[\.:\s]+(\w+)\s+se\s+contabiliz", texto)
-    if m:
-        return m.group(1)
-    m = re.search(r"\b(\d{8,12})\b", texto)
-    return m.group(1) if m else ""

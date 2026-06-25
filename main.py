@@ -41,25 +41,29 @@ _BASE = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) \
 load_dotenv(os.path.join(_BASE, ".env"))
 load_dotenv(os.path.join(_BASE, "correos", ".env.privado"), override=True)
 
-_LOG_PATH = os.path.join(_BASE, "sap_combancos.log")
-try:
-    logging.basicConfig(
-        filename=_LOG_PATH,
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] [%(module)s] %(message)s",
-        encoding="utf-8",
-        force=True,
-    )
-except OSError:
-    import tempfile as _tmp
-    _LOG_PATH = os.path.join(_tmp.gettempdir(), "sap_combancos.log")
-    logging.basicConfig(
-        filename=_LOG_PATH,
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] [%(module)s] %(message)s",
-        encoding="utf-8",
-        force=True,
-    )
+def _setup_logging() -> str:
+    fmt = "%(asctime)s [%(levelname)s] [%(module)s] %(message)s"
+    candidatos = [
+        os.path.join(_BASE, "sap_combancos.log"),
+        os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")),
+                     "ASIAUTO", "ComBancos", "sap_combancos.log"),
+        os.path.join(os.path.expanduser("~"), "Desktop", "sap_combancos.log"),
+        os.path.join(os.path.expanduser("~"), "sap_combancos.log"),
+    ]
+    for path in candidatos:
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            handler = logging.FileHandler(path, encoding="utf-8")
+            handler.setLevel(logging.INFO)
+            handler.setFormatter(logging.Formatter(fmt))
+            logging.getLogger().setLevel(logging.INFO)
+            logging.getLogger().addHandler(handler)
+            return path
+        except Exception:
+            continue
+    return ""
+
+_LOG_PATH = _setup_logging()
 _console = logging.StreamHandler()
 _console.setLevel(logging.INFO)
 _console.setFormatter(logging.Formatter("  [%(levelname)s] %(module)s: %(message)s"))
@@ -86,6 +90,15 @@ _TITULO_POPUP_LICENCIA = "licencia"   # fragmento del popup de sesión múltiple
 _TITULO_POPUP_SAP_ERR  = "SAP GUI for Windows"  # popup de error de conexión
 _TCODE_SAPLOGON_TEXT   = "SAP Logon"  # texto en título de SAP Logon
 _TCODES_MENU           = ("SESSION_MANAGER", "S000", "")  # tcodes del menú principal
+
+# ── Timing (ajustar si el sistema es más lento) ──────────────
+_SLEEP_MICRO  = 0.15  # micro-pausa (caps lock, pre-state check)
+_SLEEP_CORTO  = 0.2   # entre pasos rápidos / pyautogui
+_SLEEP_MEDIO  = 0.3   # entre pasos SAP (click, type-ahead)
+_SLEEP_LARGO  = 0.5   # tras activar ventana / escape popup
+_SLEEP_POLL   = 1     # intervalo de sondeo en loops
+_SLEEP_SAP    = 1.5   # tras popup SAP / sesión múltiple
+_SLEEP_INICIO = 2.0   # espera SAP arranque / cierre sesión
 
 
 # ─────────────────────────────────────────────────────────────
@@ -121,33 +134,51 @@ def _hwnd_con_titulo(texto: str):
     return result[0] if result else None
 
 
-def _manejar_popup_sesion_multiple():
-    """Detecta y cierra el popup de sesión múltiple de SAP sin cerrar las otras sesiones.
+_POPUP_RATIO_OPCION2  = 0.46   # Y: opción 2 "sin finalizar" (~46% altura diálogo)
+_POPUP_RATIO_BTN_X   = 0.91   # X: botón ✓ confirmar (~91% ancho diálogo)
+_POPUP_RATIO_BTN_Y   = 0.97   # Y: botón ✓ confirmar (~97% altura diálogo)
 
-    SAP muestra este popup cuando se intenta conectar con un usuario que ya
-    tiene sesiones activas. La opción seleccionada es "continuar sin cerrar otras".
 
-    Returns:
-        None
-
-    Hardcoded:
-        - _TITULO_POPUP_LICENCIA = "licencia": fragmento del título (STRING)
-        - 'tab', 'up', 'enter': teclas para seleccionar opción (STRING)
-        - 0.4, 0.2, 1.5: tiempos de espera (TIMING)
+def _clic_fisico(x: int, y: int) -> None:
+    """Clic izquierdo en coordenadas físicas (DPI-safe) vía win32api.
+    SetCursorPos posiciona el cursor; mouse_event con 0,0 hace clic ahí.
     """
-    import pyautogui
+    win32api.SetCursorPos((x, y))
+    time.sleep(_SLEEP_CORTO)
+    win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+    win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP,   0, 0, 0, 0)
+
+
+def _manejar_popup_sesion_multiple():
+    """Detecta y gestiona el popup de sesión múltiple de SAP.
+
+    Selecciona "Continuar sin finalizar entradas existentes" (opción 2).
+    Detecta posición del foco para elegir el flujo de navegación:
+      - Foco en texto superior (opción 1 activa) → Down×1 + Enter
+      - Foco en tabla inferior                   → Up×3   + Enter
+    """
+    from pynput.keyboard import Controller as _KbdCtrl, Key as _K
     hwnd = _hwnd_con_titulo(_TITULO_POPUP_LICENCIA)
     if not hwnd:
         return
     print("  Popup sesión múltiple — continuando sin cerrar otras sesiones...")
+
+    win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+    tid_yo = win32api.GetCurrentThreadId()
+    tid_el = win32process.GetWindowThreadProcessId(hwnd)[0]
+    ctypes.windll.user32.AttachThreadInput(tid_yo, tid_el, True)
     win32gui.SetForegroundWindow(hwnd)
-    time.sleep(0.4)
-    pyautogui.press('tab')
-    time.sleep(0.2)
-    pyautogui.press('up')
-    time.sleep(0.2)
-    pyautogui.press('enter')
-    time.sleep(1.5)
+    ctypes.windll.user32.SetFocus(hwnd)   # forzar foco en el diálogo
+    time.sleep(_SLEEP_SAP)
+    ctypes.windll.user32.AttachThreadInput(tid_yo, tid_el, False)
+
+    # Cancelar (opción 3) siempre viene seleccionada al abrirse el diálogo.
+    # Up×1 sube a opción 2 "Continuar sin finalizar entradas existentes".
+    _kbd = _KbdCtrl()
+    _kbd.press(_K.up); _kbd.release(_K.up)
+    time.sleep(_SLEEP_LARGO)              # pausa visible antes de confirmar
+    _kbd.press(_K.enter); _kbd.release(_K.enter)
+    time.sleep(_SLEEP_SAP)
 
 
 def _hwnd_logon():
@@ -183,7 +214,7 @@ def _traer_al_frente(hwnd):
         - 0.3, 0.5: tiempos de espera antes/después de SetForegroundWindow (TIMING)
     """
     win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-    time.sleep(0.3)
+    time.sleep(_SLEEP_MEDIO)
     try:
         win32gui.SetForegroundWindow(hwnd)
     except Exception:
@@ -192,7 +223,7 @@ def _traer_al_frente(hwnd):
         ctypes.windll.user32.AttachThreadInput(tid_yo, tid_el, True)
         win32gui.SetForegroundWindow(hwnd)
         ctypes.windll.user32.AttachThreadInput(tid_yo, tid_el, False)
-    time.sleep(0.5)
+    time.sleep(_SLEEP_LARGO)
 
 
 def _control_lista_logon(hwnd_logon):
@@ -247,9 +278,9 @@ def _cerrar_popup_error_sap() -> bool:
     print(f"  [!] Popup de error SAP detectado: {texto!r}")
     try:
         _traer_al_frente(hwnd)
-        time.sleep(0.3)
+        time.sleep(_SLEEP_MEDIO)
         pyautogui.press('escape')
-        time.sleep(0.5)
+        time.sleep(_SLEEP_LARGO)
     except Exception:
         pass
     return True
@@ -296,7 +327,7 @@ def _mover_ventana_origen(hwnd):
     r = win32gui.GetWindowRect(hwnd)
     w, h = r[2] - r[0], r[3] - r[1]
     win32gui.MoveWindow(hwnd, 0, 0, w, h, True)
-    time.sleep(0.2)
+    time.sleep(_SLEEP_CORTO)
 
 
 def abrir_sap_logon():
@@ -326,7 +357,7 @@ def abrir_sap_logon():
     print("  Lanzando SAP Logon 64...", end="", flush=True)
     subprocess.Popen([SAPLOGON])
     for _ in range(_TIMEOUT_LOGON_EXE):
-        time.sleep(1)
+        time.sleep(_SLEEP_POLL)
         print(".", end="", flush=True)
         hwnd = _hwnd_logon()
         if hwnd:
@@ -334,7 +365,7 @@ def abrir_sap_logon():
     print()
     if not hwnd:
         raise RuntimeError(f"SAP Logon no respondió en {_TIMEOUT_LOGON_EXE} s.")
-    time.sleep(1.0)
+    time.sleep(_SLEEP_POLL)
     _traer_al_frente(hwnd)
     _mover_ventana_origen(hwnd)
     print("  SAP Logon abierto.")
@@ -370,9 +401,9 @@ def conectar_ps4(hwnd_logon):
         r = win32gui.GetWindowRect(hwnd_logon)
         pyautogui.click((r[0]+r[2])//2, (r[1]+r[3])//2)
         print("  Clic en centro de ventana (fallback)")
-    time.sleep(0.4)
+    time.sleep(_SLEEP_LARGO)
     pyautogui.press("p")
-    time.sleep(0.3)
+    time.sleep(_SLEEP_MEDIO)
     pyautogui.press("enter")
     print("  Enter → PS4 PRODUCCION (type-ahead)")
 
@@ -390,7 +421,7 @@ def esperar_sesion(timeout=25) -> bool:
     """
     print("  Esperando pantalla de login SAP...", end="", flush=True)
     for _ in range(timeout):
-        time.sleep(1)
+        time.sleep(_SLEEP_POLL)
         print(".", end="", flush=True)
         if _sesion_activa():
             print()
@@ -430,14 +461,14 @@ def llenar_credenciales():
         print("  [!] Caps Lock activado — desactivando antes de escribir credenciales...")
         ctypes.windll.user32.keybd_event(0x14, 0, 0, 0)
         ctypes.windll.user32.keybd_event(0x14, 0, 0x0002, 0)
-        time.sleep(0.15)
+        time.sleep(_SLEEP_MICRO)
         if win32api.GetKeyState(win32con.VK_CAPITAL) & 1:
             raise RuntimeError("No se pudo desactivar Caps Lock. Hazlo manualmente y reintenta.")
         print("  [✓] Caps Lock desactivado.")
     print("  Llenando credenciales...")
     SAP.activar()
     SAP.mover_a_origen()
-    time.sleep(0.5)
+    time.sleep(_SLEEP_LARGO)
 
     _llenado_por_scripting = False
     try:
@@ -469,16 +500,16 @@ def llenar_credenciales():
         SAP.campo_ctrlA(USUARIO)
         SAP.tab(1)
         SAP.campo_ctrlA(PASSWORD)
-        time.sleep(0.2)
+        time.sleep(_SLEEP_CORTO)
         SAP.activar()
         SAP.enter()
         print("  Credenciales enviadas via teclado.")
 
-    time.sleep(2.0)
+    time.sleep(_SLEEP_INICIO)
     _manejar_popup_sesion_multiple()
-    time.sleep(1.5)
+    time.sleep(_SLEEP_SAP)
     try:
-        SAP.activar(); SAP.enter(); time.sleep(1.0)
+        SAP.activar(); SAP.enter(); time.sleep(_SLEEP_POLL)
     except Exception:
         pass
 
@@ -509,7 +540,7 @@ def hacer_login():
         print("  Sesión SAP activa — cerrando para iniciar sesión limpia...")
         try:
             SAP.cerrar_sap()
-            time.sleep(2.0)
+            time.sleep(_SLEEP_INICIO)
         except Exception:
             pass
         print("  Sesión cerrada — abriendo nueva sesión.")
@@ -527,9 +558,9 @@ def hacer_login():
                 cx = (rect_lista[0] + rect_lista[2]) // 2
                 cy = rect_lista[1] + _CLICK_OFFSET_Y_LOGON
                 pyautogui.click(cx, cy)
-                time.sleep(0.3)
+                time.sleep(_SLEEP_MEDIO)
                 pyautogui.press("p")
-                time.sleep(0.3)
+                time.sleep(_SLEEP_MEDIO)
                 pyautogui.press("enter")
             if not esperar_sesion(timeout=_TIMEOUT_SESION_R2):
                 raise RuntimeError("No se pudo conectar a PS4. Revisa SAP Logon.")
@@ -540,7 +571,7 @@ def hacer_login():
 
     print("  Verificando login...", end="", flush=True)
     for _ in range(_TIMEOUT_LOGIN_VERIFY):
-        time.sleep(1)
+        time.sleep(_SLEEP_POLL)
         print(".", end="", flush=True)
         if not _en_pantalla_login():
             break
@@ -783,7 +814,7 @@ def _validar_entorno():
         print("  [!] Caps Lock activado — desactivando automáticamente...")
         ctypes.windll.user32.keybd_event(0x14, 0, 0, 0)
         ctypes.windll.user32.keybd_event(0x14, 0, 0x0002, 0)
-        time.sleep(0.15)
+        time.sleep(_SLEEP_MICRO)
         if win32api.GetKeyState(win32con.VK_CAPITAL) & 1:
             print("  [!] No se pudo desactivar Caps Lock. Hazlo manualmente y vuelve a ejecutar.")
             sys.exit(1)
@@ -863,11 +894,9 @@ def main():
     print(f"  Período : {fecha_desde} – {fecha_hasta}")
     print()
 
-    _max = os.getenv("MAX_DOCS_BANCO", "1")
-    max_docs = int(_max) if _max.isdigit() and int(_max) > 0 else None
+    max_docs = None   # siempre procesa todos los documentos
     _modo = "REAL (contabiliza)" if os.getenv("CONTABILIZAR", "0") == "1" else "PRUEBA (sin guardar)"
-    _label_docs = str(max_docs) if max_docs else "Todos"
-    print(f"  Docs/banco : {_label_docs}  |  Modo: {_modo}")
+    print(f"  Docs/banco : Todos  |  Modo: {_modo}")
     print()
 
     try:

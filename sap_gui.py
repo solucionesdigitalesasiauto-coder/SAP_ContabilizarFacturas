@@ -13,10 +13,13 @@ from pynput.keyboard import Key, Controller as _KbController
 
 # ── Configuración global ──────────────────────────────────────
 SAP_CLASE    = "SAP_FRONTEND_SESSION"   # clase de ventana SAP GUI en Win32
-_PAUSE_PYAG  = 0.08    # pyautogui.PAUSE global (segundos entre acciones)
-_SLEEP_PRESS = 0.05    # entre press y release de una tecla (pynput)
-_SLEEP_TAB   = 0.1     # entre tabs consecutivos
-_SLEEP_ACTIVAR = 0.4   # tras traer ventana al frente
+_PAUSE_PYAG   = 0.08   # pyautogui.PAUSE global (entre acciones pyautogui)
+_SLEEP_CORTO  = 0.1    # entre teclas / clics / tabs
+_SLEEP_MEDIO  = 0.3    # entre pasos SAP / clipboard / ventana
+_SLEEP_LARGO  = 0.5    # tras activar ventana / espera popup
+_SLEEP_PESTANA = 0.8   # tras cambio de pestaña FB60
+_SLEEP_TCODE  = 1.5    # tras navegar a transacción / cerrar scripting
+_SLEEP_NEND   = 2.0    # tras /nend antes de popup salida
 
 pyautogui.FAILSAFE = True
 pyautogui.PAUSE = _PAUSE_PYAG
@@ -64,10 +67,10 @@ def _press(key_name: str):
         None
 
     Hardcoded:
-        - _SLEEP_PRESS = 0.05: pausa entre press y release (TIMING)
+        - _SLEEP_CORTO = 0.05: pausa entre press y release (TIMING)
     """
     k = _KEY_MAP.get(str(key_name).lower(), key_name)
-    _kb.press(k); time.sleep(_SLEEP_PRESS); _kb.release(k); time.sleep(_SLEEP_PRESS)
+    _kb.press(k); time.sleep(_SLEEP_CORTO); _kb.release(k); time.sleep(_SLEEP_CORTO)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -117,7 +120,7 @@ def activar(titulo_contiene=None):
         RuntimeError: Si no se encuentra ninguna ventana SAP con el título indicado.
 
     Hardcoded:
-        - _SLEEP_ACTIVAR = 0.4: espera tras SetForegroundWindow (TIMING)
+        - _SLEEP_LARGO = 0.4: espera tras SetForegroundWindow (TIMING)
     """
     hwnd = _encontrar_hwnd(titulo_contiene)
     if not hwnd:
@@ -143,7 +146,7 @@ def activar(titulo_contiene=None):
             except Exception:
                 pass
             ctypes.windll.user32.AttachThreadInput(tid_fg, tid_sap, False)
-    time.sleep(_SLEEP_ACTIVAR)
+    time.sleep(_SLEEP_LARGO)
     return hwnd
 
 
@@ -169,7 +172,7 @@ def esperar_titulo(titulo_contiene, timeout=15):
     while time.time() < fin:
         if _encontrar_hwnd(titulo_contiene):
             return True
-        time.sleep(0.3)
+        time.sleep(_SLEEP_MEDIO)
     raise RuntimeError(f"Pantalla '{titulo_contiene}' no aparecio en {timeout}s")
 
 
@@ -260,23 +263,25 @@ def posicionar_ventana(x=None, y=None, ancho=None, alto=None):
     Hardcoded:
         - "0", "1024", "768": valores por defecto de posición/tamaño (CONFIG)
     """
-    import os
+    import os, ctypes
     x     = int(os.getenv("SAP_WIN_X",     "0"))    if x     is None else x
     y     = int(os.getenv("SAP_WIN_Y",     "0"))    if y     is None else y
-    ancho = int(os.getenv("SAP_WIN_ANCHO", "1024")) if ancho is None else ancho
-    alto  = int(os.getenv("SAP_WIN_ALTO",  "768"))  if alto  is None else alto
+    _ancho_cfg = int(os.getenv("SAP_WIN_ANCHO", "1024")) if ancho is None else ancho
+    ancho = ctypes.windll.user32.GetSystemMetrics(0) if _ancho_cfg == 0 else _ancho_cfg
+    _alto_cfg = int(os.getenv("SAP_WIN_ALTO",  "768"))  if alto  is None else alto
+    alto  = ctypes.windll.user32.GetSystemMetrics(1) if _alto_cfg == 0 else _alto_cfg
     hwnd = _encontrar_hwnd()
     if not hwnd:
         raise RuntimeError("Ventana SAP no encontrada")
     placement = win32gui.GetWindowPlacement(hwnd)
     if placement[1] in (win32con.SW_SHOWMINIMIZED, win32con.SW_SHOWMAXIMIZED):
         win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-        time.sleep(0.2)
+        time.sleep(_SLEEP_MEDIO)
     try:
         win32gui.MoveWindow(hwnd, x, y, ancho, alto, True)
     except Exception:
         pass   # modal dialog activo o restricción del proceso — ignorar
-    time.sleep(_SLEEP_ACTIVAR)
+    time.sleep(_SLEEP_LARGO)
 
 
 def mover_a_origen():
@@ -296,7 +301,7 @@ def mover_a_origen():
     r = win32gui.GetWindowRect(hwnd)
     w, h = r[2] - r[0], r[3] - r[1]
     win32gui.MoveWindow(hwnd, 0, 0, w, h, True)
-    time.sleep(0.2)
+    time.sleep(_SLEEP_MEDIO)
 
 
 def info_ventana():
@@ -387,14 +392,14 @@ def tab_pynput(n=1):
         None
 
     Hardcoded:
-        - _SLEEP_PRESS = 0.05: pausa dentro de press/release (TIMING)
-        - _SLEEP_TAB = 0.1: pausa entre tabs (TIMING)
+        - _SLEEP_CORTO = 0.05: pausa dentro de press/release (TIMING)
+        - _SLEEP_CORTO = 0.1: pausa entre tabs (TIMING)
     """
     for _ in range(n):
         _kb.press(Key.tab)
-        time.sleep(_SLEEP_PRESS)
+        time.sleep(_SLEEP_CORTO)
         _kb.release(Key.tab)
-        time.sleep(_SLEEP_TAB)
+        time.sleep(_SLEEP_CORTO)
 
 
 def shift_tab(n=1):
@@ -410,7 +415,7 @@ def shift_tab(n=1):
         with _kb.pressed(Key.shift):
             _kb.press(Key.tab)
             _kb.release(Key.tab)
-        time.sleep(_SLEEP_TAB)
+        time.sleep(_SLEEP_CORTO)
 
 
 def copiar():
@@ -421,10 +426,10 @@ def copiar():
     """
     with _kb.pressed(Key.ctrl):
         _kb.press('a'); _kb.release('a')
-    time.sleep(0.1)
+    time.sleep(_SLEEP_CORTO)
     with _kb.pressed(Key.ctrl):
         _kb.press('c'); _kb.release('c')
-    time.sleep(0.25)
+    time.sleep(_SLEEP_MEDIO)
 
 
 def leer_portapapeles() -> str:
@@ -450,7 +455,7 @@ def pegar_como_texto():
     if texto:
         with _kb.pressed(Key.ctrl):
             _kb.press('a'); _kb.release('a')
-        time.sleep(0.05)
+        time.sleep(_SLEEP_CORTO)
         pyautogui.write(texto)
 
 
@@ -470,7 +475,7 @@ def pegar_fecha():
     if texto:
         with _kb.pressed(Key.ctrl):
             _kb.press('a'); _kb.release('a')
-        time.sleep(0.05)
+        time.sleep(_SLEEP_CORTO)
         pyautogui.write(texto, interval=0.05)
 
 
@@ -495,7 +500,7 @@ def limpiar():
     _press('home')
     with _kb.pressed(Key.shift):
         _kb.press(Key.end); _kb.release(Key.end)
-    time.sleep(0.05)
+    time.sleep(_SLEEP_CORTO)
     _press('delete')
 
 
@@ -525,9 +530,9 @@ def campo_ctrlA(texto):
     """
     with _kb.pressed(Key.ctrl):
         _kb.press('a'); _kb.release('a')
-    time.sleep(0.05)
+    time.sleep(_SLEEP_CORTO)
     _press('delete')
-    time.sleep(0.05)
+    time.sleep(_SLEEP_CORTO)
     escribir(texto)
 
 
@@ -571,10 +576,10 @@ def salir_tabla():
     for _ in range(4):
         with _kb.pressed(Key.ctrl):
             with _kb.pressed(Key.shift):
-                time.sleep(0.1)
+                time.sleep(_SLEEP_CORTO)
                 _kb.press(Key.tab)
                 _kb.release(Key.tab)
-        time.sleep(0.4)
+        time.sleep(_SLEEP_LARGO)
 
 def siguiente_pestana():
     """Avanza a la siguiente pestaña en FB60 con Ctrl+Shift+AvPág (pynput).
@@ -587,10 +592,10 @@ def siguiente_pestana():
     """
     with _kb.pressed(Key.ctrl):
         with _kb.pressed(Key.shift):
-            time.sleep(0.1)
+            time.sleep(_SLEEP_CORTO)
             _kb.press(Key.page_down)
             _kb.release(Key.page_down)
-    time.sleep(0.8)
+    time.sleep(_SLEEP_PESTANA)
 
 def ctrl_s():
     """Envía Ctrl+S (Guardar/Contabilizar en SAP) via pynput VK directo.
@@ -647,7 +652,7 @@ def click_en(rel_x, rel_y, boton='left'):
     """
     x, y = pos_en_ventana(rel_x, rel_y)
     pyautogui.click(x, y, button=boton)
-    time.sleep(0.15)
+    time.sleep(_SLEEP_CORTO)
 
 
 def doble_click_en(rel_x, rel_y):
@@ -662,7 +667,7 @@ def doble_click_en(rel_x, rel_y):
     """
     x, y = pos_en_ventana(rel_x, rel_y)
     pyautogui.doubleClick(x, y)
-    time.sleep(0.15)
+    time.sleep(_SLEEP_CORTO)
 
 
 def click_win32(rel_x, rel_y):
@@ -677,11 +682,11 @@ def click_win32(rel_x, rel_y):
     """
     x, y = pos_en_ventana(rel_x, rel_y)
     win32api.SetCursorPos((x, y))
-    time.sleep(0.1)
+    time.sleep(_SLEEP_CORTO)
     win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, x, y, 0, 0)
-    time.sleep(0.05)
+    time.sleep(_SLEEP_CORTO)
     win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, x, y, 0, 0)
-    time.sleep(0.15)
+    time.sleep(_SLEEP_CORTO)
 
 
 def click_postmsg(grid_rel_x, grid_rel_y, grid_clase="SAPALVGrid"):
@@ -721,9 +726,9 @@ def click_postmsg(grid_rel_x, grid_rel_y, grid_clase="SAPALVGrid"):
     MAKELONG = lambda lo, hi: (lo & 0xFFFF) | ((hi & 0xFFFF) << 16)
     lparam = MAKELONG(grid_rel_x, grid_rel_y)
     win32api.PostMessage(grid_hwnd, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, lparam)
-    time.sleep(0.05)
+    time.sleep(_SLEEP_CORTO)
     win32api.PostMessage(grid_hwnd, win32con.WM_LBUTTONUP, 0, lparam)
-    time.sleep(0.2)
+    time.sleep(_SLEEP_MEDIO)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -749,16 +754,16 @@ def ir_a(tcode):
     """
     activar()
     combo('ctrl', '/')   # pyautogui.hotkey — Ctrl+/ activa barra de comandos SAP
-    time.sleep(0.3)
+    time.sleep(_SLEEP_MEDIO)
     with _kb.pressed(Key.ctrl):
         _kb.press('a'); _kb.release('a')
-    time.sleep(0.05)
+    time.sleep(_SLEEP_CORTO)
     _press('delete')
-    time.sleep(0.05)
+    time.sleep(_SLEEP_CORTO)
     cmd = tcode if tcode.startswith('/') else f'/n{tcode}'
     escribir(cmd)
     enter()
-    time.sleep(1.5)
+    time.sleep(_SLEEP_TCODE)
     posicionar_ventana()
 
 
@@ -772,9 +777,9 @@ def confirmar_popup_si():
     Returns:
         None
     """
-    time.sleep(0.5)
+    time.sleep(_SLEEP_LARGO)
     enter()
-    time.sleep(0.3)
+    time.sleep(_SLEEP_MEDIO)
 
 
 def cancelar_popup():
@@ -783,9 +788,9 @@ def cancelar_popup():
     Returns:
         None
     """
-    time.sleep(0.3)
+    time.sleep(_SLEEP_MEDIO)
     escape()
-    time.sleep(0.3)
+    time.sleep(_SLEEP_MEDIO)
 
 
 def cerrar_sap():
@@ -815,7 +820,7 @@ def cerrar_sap():
             _       = session.Type
 
             session.findById("wnd[0]").close()
-            time.sleep(1.2)
+            time.sleep(_SLEEP_TCODE)
 
             for btn_id in (
                 "wnd[1]/usr/btnSPOP-VAROPTION1",
@@ -824,7 +829,7 @@ def cerrar_sap():
             ):
                 try:
                     session.findById(btn_id).press()
-                    time.sleep(1.5)
+                    time.sleep(_SLEEP_TCODE)
                     if not _encontrar_hwnd():
                         return
                     break
@@ -843,7 +848,7 @@ def cerrar_sap():
         _kbd2 = _KbCtrl()
 
         ir_a("/nend")
-        time.sleep(2.0)
+        time.sleep(_SLEEP_NEND)
         hwnd_popup = win32gui.FindWindow(None, "Salir del sistema")
         if hwnd_popup:
             tid_sap = win32process.GetWindowThreadProcessId(hwnd_popup)[0]
@@ -852,9 +857,9 @@ def cerrar_sap():
             win32gui.BringWindowToTop(hwnd_popup)
             win32gui.SetForegroundWindow(hwnd_popup)
             ctypes.windll.user32.AttachThreadInput(tid_yo, tid_sap, False)
-            time.sleep(0.3)
+            time.sleep(_SLEEP_MEDIO)
             _kbd2.press(_Key.tab);   _kbd2.release(_Key.tab)
-            time.sleep(0.1)
+            time.sleep(_SLEEP_CORTO)
             _kbd2.press(_Key.enter); _kbd2.release(_Key.enter)
 
     except Exception:

@@ -15,7 +15,6 @@ _TAB_PROVEEDOR   = 1   # desde campo Sociedad
 _TAB_FECHA_DESDE = 9
 _TAB_FECHA_HASTA = 1
 _TAB_TIPO_DOC    = 5
-_TAB_PENDIENTE   = 4
 _kbd = _KbCtrl()
 
 # ── Timings (ajustar si SAP responde más lento) ───────────────
@@ -248,19 +247,15 @@ def _llenar_form_teclado(sociedad, proveedor, fecha_desde, fecha_hasta, tipo_doc
     SAP.tab(_TAB_FECHA_HASTA)
     time.sleep(_SLEEP_CORTO)
     SAP.escribir(fecha_hasta)
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
 
     SAP.tab(_TAB_TIPO_DOC)
     time.sleep(_SLEEP_CORTO)
     SAP.escribir(tipo_doc)
     time.sleep(_SLEEP_CORTO)
 
-    SAP.tab(_TAB_PENDIENTE)
-    time.sleep(_SLEEP_CORTO)
-    SAP.tecla('space')
-
     SAP.activar(_TITULO_ZFIEC_ES)
-    time.sleep(_SLEEP_CORTO)
+    #time.sleep(_SLEEP_CORTO)
     SAP.f8()
     _log.debug("ZFIEC015 formulario enviado via teclado.")
 
