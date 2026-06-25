@@ -37,11 +37,32 @@ from __future__ import annotations
 import os
 from correos.outlook_notifier import OutlookNotifier
 
+# ── Colores de estado en tabla de registros ───────────────────
+_COLOR_CONTABILIZADO_FG = "#27ae60"
+_COLOR_CONTABILIZADO_BG = "#eafaf1"
+_COLOR_ERROR_FG         = "#c0392b"
+_COLOR_ERROR_BG         = "#fdecea"
+_COLOR_OMITIDO_FG       = "#888"
+_COLOR_OMITIDO_BG       = "#f5f5f5"
+
+# ── Límite de caracteres en columna Detalle ───────────────────
+_MAX_DETALLE = 80   # caracteres máximos mostrados en columna Detalle del correo
+
 
 class NotificadorSAP:
     """Wrapper de OutlookNotifier con plantillas específicas para FB60 / SAP."""
 
     def __init__(self) -> None:
+        """Inicializa el notificador con configuración específica de comisiones bancarias.
+
+        Sobreescribe los valores por defecto de OutlookNotifier con los del .env
+        para mostrar el nombre y subtítulo correctos en los correos.
+
+        Hardcoded:
+            - "[SAP]": prefijo por defecto si no hay .env (CONFIG)
+            - "Robot SAP Comisiones Bancarias": nombre del sistema (CONFIG)
+            - "Automatización FI — Comisiones Bancarias": subtítulo (CONFIG)
+        """
         self._n = OutlookNotifier()
         self._n.subject_prefix  = os.getenv("OUTLOOK_SUBJECT_PREFIX",  "[SAP]")
         self._n.system_name     = os.getenv("OUTLOOK_SYSTEM_NAME",     "Robot SAP Comisiones Bancarias")
@@ -50,17 +71,35 @@ class NotificadorSAP:
     # ── RESUMEN POR BANCO ──────────────────────────────────────────────────────
 
     def notify_resumen_banco(self, banco: str, registros: list[dict]) -> None:
-        """
-        Envía resumen al terminar el procesamiento de un banco.
+        """Envía resumen al terminar el procesamiento de un banco.
 
-        Cada dict en registros debe tener:
-            numero_doc, fecha, importe, cuenta_mayor, centro_costo,
-            estado ("CONTABILIZADO" | "ERROR" | "OMITIDO"), detalle
+        Genera una tabla HTML con estadísticas (total / contabilizadas / con error)
+        y el detalle de cada registro con su estado en badge de color.
+
+        Args:
+            banco (str): Nombre del banco procesado (ej. "Banco del Austro").
+            registros (list[dict]): Lista de registros procesados. Cada dict debe tener:
+                - numero_doc (str): Número de documento SAP.
+                - fecha (str): Fecha de la factura en formato SAP.
+                - importe (str): Importe de la factura.
+                - cuenta_mayor (str): Cuenta mayor GL usada.
+                - centro_costo (str): Centro de costo asignado.
+                - estado (str): "CONTABILIZADO" | "ERROR" | "OMITIDO".
+                - detalle (str): Mensaje de error o detalle adicional.
+
+        Returns:
+            None
+
+        Hardcoded:
+            - _MAX_DETALLE = 80: máximo de chars en columna Detalle (CONFIG)
+            - "CONTABILIZADO", "ERROR", "OMITIDO": valores de estado válidos (STRING)
+            - _COLOR_*: colores de badges por estado (ESTILO)
+            - CSS inline de la tabla: estilos de presentación (ESTILO)
         """
         total      = len(registros)
         contabiliz = sum(1 for r in registros if r.get("estado") == "CONTABILIZADO")
         con_error  = total - contabiliz
-        color      = "#27ae60" if con_error == 0 else "#e67e22"
+        color      = _COLOR_CONTABILIZADO_FG if con_error == 0 else "#e67e22"
         icono      = "✅" if con_error == 0 else "⚠️"
 
         stats = f"""
@@ -74,21 +113,29 @@ class NotificadorSAP:
             </td>
             <td style="padding:12px 20px;border-bottom:1px solid #e8e8e8;border-left:1px solid #e8e8e8;">
               <span style="font-size:13px;color:#888;">Contabilizadas</span><br>
-              <span style="font-size:26px;font-weight:bold;color:#27ae60;">{contabiliz}</span>
+              <span style="font-size:26px;font-weight:bold;color:{_COLOR_CONTABILIZADO_FG};">{contabiliz}</span>
             </td>
             <td style="padding:12px 20px;border-bottom:1px solid #e8e8e8;border-left:1px solid #e8e8e8;">
               <span style="font-size:13px;color:#888;">Con error</span><br>
-              <span style="font-size:26px;font-weight:bold;color:#c0392b;">{con_error}</span>
+              <span style="font-size:26px;font-weight:bold;color:{_COLOR_ERROR_FG};">{con_error}</span>
             </td>
           </tr>
         </table>
         """
 
         def _badge(estado: str) -> str:
+            """Genera un badge HTML con el color del estado del registro.
+
+            Args:
+                estado (str): Estado del registro ("CONTABILIZADO", "ERROR", "OMITIDO").
+
+            Returns:
+                str: HTML del badge con estilo inline.
+            """
             cfg = {
-                "CONTABILIZADO": ("#27ae60", "#eafaf1"),
-                "ERROR":         ("#c0392b", "#fdecea"),
-                "OMITIDO":       ("#888",    "#f5f5f5"),
+                "CONTABILIZADO": (_COLOR_CONTABILIZADO_FG, _COLOR_CONTABILIZADO_BG),
+                "ERROR":         (_COLOR_ERROR_FG,         _COLOR_ERROR_BG),
+                "OMITIDO":       (_COLOR_OMITIDO_FG,       _COLOR_OMITIDO_BG),
             }
             fg, bg = cfg.get(estado.upper(), ("#555", "#f5f5f5"))
             return (
@@ -105,7 +152,8 @@ class NotificadorSAP:
             f"<td style='padding:8px 12px;font-family:monospace;font-size:12px;color:#666;'>{r.get('centro_costo', '')}</td>"
             f"<td style='padding:8px 12px;'>{_badge(r.get('estado', ''))}</td>"
             f"<td style='padding:8px 12px;font-size:11px;color:#999;'>"
-            f"{str(r.get('detalle', ''))[:80]}{'…' if len(str(r.get('detalle', ''))) > 80 else ''}</td>"
+            f"{str(r.get('detalle', ''))[:_MAX_DETALLE]}"
+            f"{'…' if len(str(r.get('detalle', ''))) > _MAX_DETALLE else ''}</td>"
             f"</tr>"
             for r in registros
         )
@@ -144,7 +192,21 @@ class NotificadorSAP:
     # ── ERROR CRÍTICO POR BANCO ────────────────────────────────────────────────
 
     def notify_error_banco(self, banco: str, error: str) -> None:
-        """Notifica un error crítico que impidió procesar el banco."""
+        """Notifica un error crítico que impidió procesar el banco.
+
+        Envía el traceback completo y un mensaje explicativo indicando
+        que se requiere revisión manual en ZFIEC015 / FB60.
+
+        Args:
+            banco (str): Nombre del banco donde ocurrió el error.
+            error (str): Mensaje de error o traceback completo.
+
+        Returns:
+            None
+
+        Hardcoded:
+            - "ZFIEC015 / FB60": transacciones SAP mencionadas en el cuerpo (STRING)
+        """
         self._n.notify_critical(
             error_msg=error,
             batch_label=banco,

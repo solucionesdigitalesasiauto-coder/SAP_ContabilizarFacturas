@@ -18,7 +18,7 @@ Automatizar el proceso mensual de recepción y contabilización de facturas de c
 
 ```bash
 # 1. Instalar dependencias (solo la primera vez)
-pip install pywin32 python-dotenv pyautogui pyperclip pynput
+pip install pywin32 python-dotenv pyautogui pyperclip pynput pywinauto
 
 # 2. Llenar credenciales en .env (ver tabla de parámetros más abajo)
 
@@ -106,7 +106,9 @@ SAP/
 9. `_llenar_pestana_detalle()` — Ctrl+Shift+AvPág → 1 Tab → `_pegar(texto_cabecera)`
 10. `_contabilizar_o_cancelar()`:
     - **Modo prueba** (`CONTABILIZAR=0`): F12 → Enter (Sí tiene foco por defecto en popup de abandono — NO usar Tab antes)
-    - **Modo real** (`CONTABILIZAR=1`): Ctrl+S → espera activa (40×0.2s) → captura Nº Doc
+    - **Modo real** (`CONTABILIZAR=1`): `SAP.tab(1)` → pywinauto `click_input()` en botón Contabilizar (Footer → auto_id=4004) → `_SLEEP_POPUP` (2s) → 3× Enter para cerrar popup "Información" embebido → retorna "OK"
+    - Popup "Información" ("Doc.XXXX se contabilizó") es **embebido** en la ventana SAP FB60 — NO es top-level, NO detectable por win32gui.EnumWindows. Se cierra con Enter fallback.
+    - `SAP.tab(1)` antes del clic es obligatorio — sin él, Txt.cabec sigue en edit mode y SAP ignora el clic.
 
 ---
 
@@ -133,9 +135,11 @@ SAP/
 | Grilla ALV (mover cursor Right) | pynput `_kbd.press(Key.right)` — pyautogui.press('right') SAP lo ignora |
 | Foco en ventana | `activar()` — solo restaura si minimizada, no redimensiona maximizada |
 | Cierre de SAP | `cerrar_sap()`: `/nend` + Enter en popup |
-| Espera tras contabilizar | Espera activa `titulo_actual()` cada 0.2s (máx 8s) — no `sleep` fijo |
+| Espera tras contabilizar | `_SLEEP_POPUP=2s` fijo + 3× Enter → popup embebido se cierra con pynput Enter |
 | Error en un banco | `continue` en el loop — el proceso sigue con el siguiente banco |
-| Notificaciones de error | `_notificar_error()` en `main.py` — loguea + correo sin cortar el flujo |
+| Grilla vacía (sin docs) | `procesar_documentos` retorna `([], [])` si "recepci" en título post-`_abrir_fb60_teclado` — NO lanza RuntimeError |
+| Notificaciones de error | `_notificar_error()` en `main.py` — loguea + correo sin cortar el flujo. Grilla vacía NO es error. |
+| pywinauto botón SAP | `click_input()` funciona; `invoke()` (UIA InvokePattern) NO activa guardado en SAP |
 
 ---
 
@@ -224,30 +228,35 @@ Aparece después de mostrar bancos y período, antes de abrir SAP. Permite elegi
 
 ## Navegación de grilla ZFIEC015 en modo teclado (`_abrir_fb60_teclado`)
 
-**REGLA CRÍTICA: dos rutas completamente independientes. No mezclar.**
+**Siempre se llama con `fila_idx=0`** — SAP refresca la grilla tras cada contabilización y el siguiente doc queda en row 0.
 
-| Caso | Secuencia | Motivo |
-|------|-----------|--------|
-| `fila_idx == 0` (primera fila) | `F2 → Home → Right → Enter → Enter` | Grid recién cargado: SAP no asigna foco de teclado hasta interacción. F2 despierta el grid sin abrir transacción. Home → MIRO, Right → FB60 |
-| `fila_idx > 0` (siguientes filas, modo prueba) | `Down → Home → Right → Enter → Enter` | Grid ya activo desde fila_idx=0. F2 sobre columna FB60 abriría transacción incorrecta. Solo avanzar fila con Down, luego Home → MIRO, Right → FB60 |
+| Secuencia | Detalle |
+|-----------|---------|
+| `F2 (1s) → Home (0.4s) → Right (0.4s) → Enter` | F2 activa foco del grid. Home → columna MIRO. Right → columna FB60. Enter abre popup HTML de confirmación. |
+| Retry Enter × `_MAX_INTENTOS_POPUP=3` cada 1.5s | El popup HTML de ZFIEC015 tarda variable (1-8s) en renderizar. Se reintenta Enter hasta ver título FB60. |
 
-- `Home` con grid activo queda en **MIRO** (primera col interactiva — SAP omite MSTAT con teclado).
+- `Home` queda en **MIRO** (SAP omite MSTAT con teclado).
 - `Right` (1 vez) desde MIRO → **FB60**.
-- `Enter` × 2: primero abre popup de confirmación, segundo confirma Sí.
-- Timeout único de 3s — si no aparece "Registrar factura" en 3s, retorna False y el loop hace break (grilla vacía en modo teclado).
+- Después de `_abrir_fb60_teclado` para doc 2+: `time.sleep(1.0)` antes de `registrar_factura`.
+- F2 necesita 1.0s de espera (era 0.5s) — timing insuficiente causaba que Right no registrara.
+- Si FB60 no abre en `_TIMEOUT_FB60=5s` y título sigue en ZFIEC015 → grilla vacía → `return ([], [])`.
+- Si título es otra pantalla → `RuntimeError` → email de error.
 
 ---
 
-## Estado actual (23/06/2026)
+## Estado actual (24/06/2026)
 
-- Flujo end-to-end funcional y verificado en **producción**: login → ZFIEC015 → FB60 (todos los campos) → contabilización real (Ctrl+S)
-- Todo teclado SAP via **pynput** excepto Ctrl+/ (único en pyautogui)
-- Código limpio: funciones de una responsabilidad, sin pyautogui en transactions/
+- Flujo end-to-end funcional y verificado en **producción**: login → ZFIEC015 → FB60 (todos los campos) → contabilización real (pywinauto click_input + Enter) → múltiples documentos y múltiples bancos
+- Todo teclado SAP via **pynput** excepto Ctrl+/ (único en pyautogui). pywinauto para botón Contabilizar.
+- `_contabilizar()`: click_input() → 2s sleep → 3× Enter cierra popup "Información" embebido
+- Grilla vacía → retorno limpio `([], [])`, sin error ni correo
+- Constantes de timing en bloque `_SLEEP_*` al inicio de cada archivo — sin magic numbers en funciones
+- `_MAX_INTENTOS_POPUP=3` en zfiec015_kb para retry del popup HTML de ZFIEC015
+- `combancos.spec`: pywinauto agregado a hiddenimports para build correcto
 - Errores por banco: loguean con `exc_info=True`, envían correo y continúan (`continue`, no `break`)
 - SAP se cierra automáticamente al final (`cerrar_sap()` con `/nend`)
-- Espera activa tras contabilizar (40×0.2s) en lugar de sleep fijo
 - Menú interactivo al inicio para elegir cantidad de docs y modo (prueba/real) sin editar .env
-- `_posicion_normal` funciona para primer Y subsecuentes ingresos FB60 (verificado en producción 23/06/2026)
+- `_posicion_normal` funciona para primer Y subsecuentes ingresos FB60 (verificado en producción)
 
 ---
 
@@ -261,8 +270,18 @@ El menú sobreescribe el valor del `.env` si se selecciona una opción distinta.
 
 ---
 
+## Reglas de trabajo con Claude
+
+- **Usar `Edit` siempre**, nunca `Write` para archivos existentes — solo el fragmento que cambia
+- **Una función a la vez**: si el bug está en `procesar_documentos`, solo tocar esa función hasta que el usuario confirme que funciona
+- **Marcar con `# TODO: fix`** la línea exacta que falla al inicio del debug; limpiar solo al confirmar
+- No releer archivos que no van a cambiar
+- No tocar funciones fuera del scope del bug reportado
+
+---
+
 ## Pendientes
 
 - [ ] Completar números de proveedor SAP para Pacífico, Diners, Internacional, Guayaquil en `bancos.json`
 - [ ] Verificar columna de estado en grilla (`MSTAT`) para filtrar filas ya procesadas
-- [ ] Rebuild exe con `release/build.py` tras cualquier cambio de código
+- [x] Cerrar SAP: popup "Salir del sistema" es top-level win32. "No" es botón por defecto — solución: `AttachThreadInput` + `BringWindowToTop` + `SetForegroundWindow` → Tab (mueve a "Sí") + pynput Enter. Integrado en `cerrar_sap()` Intento 2.
