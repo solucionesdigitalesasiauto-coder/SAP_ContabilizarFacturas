@@ -32,7 +32,7 @@ _TITULO_ZFIEC_ES      = "Recepción de documentos Electrónicos"   # con tilde (
 _TITULO_FB60          = "Registrar factura"
 _GRID_SAP_ID          = "wnd[0]/usr/cntlGRID1/shellcont/shell"
 _COL_FB60             = "FB60"                                   # columna de botón en grilla
-_TIMEOUT_ZFIEC        = 15   # segundos esperando pantalla ZFIEC015
+_TIMEOUT_ZFIEC        = 30   # segundos esperando pantalla ZFIEC015
 _TIMEOUT_FB60         = 5    # segundos esperando apertura de FB60
 _MAX_INTENTOS_POPUP   = 3    # reintentos Enter para popup HTML de ZFIEC015
 
@@ -453,8 +453,13 @@ def _esperar_y_confirmar_popup(timeout: float = 8) -> bool:
                 except Exception:
                     continue
 
-            # Botón no accesible via UIA (HTML puro) — Enter funciona igual
-            _log.debug("Botón 'Sí' no accesible via UIA — Enter fallback")
+            # Botones no accesibles via UIA (HTML puro)
+            # El popup ya está al frente — Tab×2 → Enter sin set_focus()
+            _kbd.press(_Key.tab); _kbd.release(_Key.tab)
+            time.sleep(_SLEEP_CORTO)
+            _kbd.press(_Key.tab); _kbd.release(_Key.tab)
+            time.sleep(_SLEEP_CORTO)
+            _log.info("Tab×2 → Enter en popup FB60 (Sí)")
             _kbd.press(_Key.enter); _kbd.release(_Key.enter)
             return True
 
@@ -495,13 +500,7 @@ def _abrir_fb60_teclado(fila_idx: int, mismo_foco: bool = False) -> bool:
     _kbd.press(_Key.right); _kbd.release(_Key.right)
     time.sleep(_SLEEP_LARGO)
     _kbd.press(_Key.enter); _kbd.release(_Key.enter)   # abre popup de confirmación HTML
-    # Reintentos: Enter cada 1.5s hasta que FB60 aparezca (máx 12s)
-    for _intento in range(_MAX_INTENTOS_POPUP):
-        time.sleep(_SLEEP_LARGO)
-        if _TITULO_FB60.lower() in SAP.titulo_actual().lower():
-            break
-        SAP.enter()
-        _log.info("Popup ZFIEC015: Enter intento %d", _intento + 1)
+    _esperar_y_confirmar_popup(timeout=8)              # detecta popup y clic en Sí
     try:
         SAP.esperar_titulo(_TITULO_FB60, timeout=_TIMEOUT_FB60)
         return True

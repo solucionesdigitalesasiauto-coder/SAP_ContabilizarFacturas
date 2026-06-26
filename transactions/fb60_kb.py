@@ -2,7 +2,9 @@
 import os
 import time
 import logging
+import datetime
 import pyperclip
+import pyautogui
 from pynput.keyboard import Controller as _KbCtrl, Key as _Key
 
 import sap_gui as SAP
@@ -32,6 +34,38 @@ _TITULO_FB60_ALT  = "ingresar factura"    # título alternativo FB60
 _TITULO_POPUP_ABA = "tratamiento"         # popup de abandono al F12
 _IMPORTE_AUTO     = "*"                   # SAP calcula el total automáticamente
 _TIMEOUT_FB60     = 8                     # segundos esperando apertura de FB60
+_DIR_SCREENSHOTS  = "screenshots"         # carpeta de capturas pre-contabilización
+
+
+_SENTINEL = "\x7F_SAP_CHECK_\x7F"   # marcador para detectar si Ctrl+C respondió
+
+
+def _verificar_inline(nombre: str, esperado: str, en_tabla: bool = False) -> None:
+    """Lee el campo activo con Ctrl+C y lanza ValueError si no coincide.
+
+    Si Ctrl+C no responde (SAP no actualizó el portapapeles), solo advierte —
+    no aborta — para evitar falsos positivos en contextos donde SAP ignora Ctrl+C.
+    Si está en_tabla=True y hay mismatch, llama a salir_tabla() antes de relanzar.
+    """
+    pyperclip.copy(_SENTINEL)
+    time.sleep(_SLEEP_MICRO)
+    with _kbd.pressed(_Key.ctrl):
+        _kbd.press('c'); _kbd.release('c')
+    time.sleep(_SLEEP_CORTO)
+    obtenido = pyperclip.paste().strip()
+
+    if _SENTINEL in obtenido:
+        _log.warning("  verificar %-20s → Ctrl+C sin respuesta (se continúa)", nombre)
+        return
+
+    if obtenido != esperado:
+        _log.error("  MISMATCH %-20s esperado=%r  obtenido=%r", nombre, esperado, obtenido)
+        if en_tabla:
+            try: SAP.salir_tabla()
+            except Exception: pass
+        raise ValueError(f"Campo {nombre!r}: esperado {esperado!r}  SAP tiene {obtenido!r}")
+
+    _log.info("  verificar %-20s OK (%r)", nombre, obtenido)
 
 
 def _pegar(valor: str) -> None:
@@ -127,7 +161,7 @@ def registrar_factura(banco: dict) -> dict:
     t = _t(f"indicador_impuesto ← {ind_impuesto!r}", t)
     time.sleep(_SLEEP_CORTO)
     _posicion_normal(cuenta_mayor, texto_com, centro_costo)
-    t = _t(f"posicion_normal ← cta={cuenta_mayor!r} cc={centro_costo!r}", t)
+    t = _t(f"posicion_normal ← cta={cuenta_mayor!r} importe={_IMPORTE_AUTO!r} txt={texto_com!r} cc={centro_costo!r}", t)
     time.sleep(_SLEEP_CORTO)
     _salir_tabla_y_limpiar_advertencia()
     t = _t("salir_tabla ✓", t)
@@ -137,6 +171,10 @@ def registrar_factura(banco: dict) -> dict:
     time.sleep(_SLEEP_CORTO)
     _llenar_pestana_detalle(texto_cab)
     t = _t(f"pestana_detalle ← {texto_cab!r}", t)
+    time.sleep(_SLEEP_CORTO)
+
+    ruta_img = _screenshot_datos_basicos(banco.get("nombre", "banco"))
+    t = _t(f"screenshot ← {os.path.basename(ruta_img)}", t)
     time.sleep(_SLEEP_CORTO)
 
     nro = _contabilizar_o_cancelar(fecha_capturada)
@@ -271,12 +309,10 @@ def _llenar_resto_tabla(texto_com: str, centro_costo: str) -> None:
         - _IMPORTE_AUTO = "*"  (STRING — indica a SAP que calcule el total)
     """
     SAP.tab(_TAB_POS_IMPORTE)
-    SAP.activar()
     _pegar(_IMPORTE_AUTO)
     time.sleep(_SLEEP_MEDIO)
 
     SAP.tab(_TAB_POS_TEXTO)
-    SAP.activar()
     _pegar(texto_com)
     time.sleep(_SLEEP_MEDIO)
 
@@ -351,6 +387,27 @@ def _llenar_pestana_detalle(texto_cab: str) -> None:
     SAP.enter()
     SAP.activar()
     time.sleep(_SLEEP_CORTO)
+
+
+def _screenshot_datos_basicos(banco_nombre: str) -> str:
+    """Retrocede a Datos básicos, toma screenshot y retorna la ruta del archivo.
+
+    Navega 2 pestañas atrás (Detalle→Pago→Datos básicos) para capturar
+    Acreedor, fechas y moneda antes de contabilizar. El botón Contabilizar
+    está en el footer y funciona desde cualquier pestaña, así que NO es
+    necesario volver a Detalle antes de llamar a _contabilizar_o_cancelar.
+    """
+    SAP.activar()
+    for _ in range(2):
+        SAP.pestana_anterior()
+    time.sleep(_SLEEP_MEDIO)
+
+    os.makedirs(_DIR_SCREENSHOTS, exist_ok=True)
+    ts  = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    ruta = os.path.join(_DIR_SCREENSHOTS, f"{banco_nombre}_{ts}.png")
+    pyautogui.screenshot(ruta)
+    _log.info("Screenshot pre-contabilizacion: %s", ruta)
+    return ruta
 
 
 def _contabilizar_o_cancelar(fecha_capturada: str) -> str:

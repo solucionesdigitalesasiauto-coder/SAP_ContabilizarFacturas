@@ -99,6 +99,8 @@ _SLEEP_LARGO  = 0.5   # tras activar ventana / escape popup
 _SLEEP_POLL   = 1     # intervalo de sondeo en loops
 _SLEEP_SAP    = 1.5   # tras popup SAP / sesión múltiple
 _SLEEP_INICIO = 2.0   # espera SAP arranque / cierre sesión
+_MAX_INTENTOS_BANCO  = 3    # total intentos por banco (1 original + 2 reintentos)
+_SLEEP_REINTENTO_BANCO = 5.0  # pausa antes de reintentar banco
 
 
 # ─────────────────────────────────────────────────────────────
@@ -154,30 +156,41 @@ def _manejar_popup_sesion_multiple():
 
     Selecciona "Continuar sin finalizar entradas existentes" (opción 2).
     Detecta posición del foco para elegir el flujo de navegación:
-      - Foco en texto superior (opción 1 activa) → Down×1 + Enter
-      - Foco en tabla inferior                   → Up×3   + Enter
+      - Flujo 1: foco en texto superior ("El usuario...") → Ctrl+Shift+Down ×6
+      - Flujo 2: foco en historial/tabla inferior          → Up×3
     """
-    from pynput.keyboard import Controller as _KbdCtrl, Key as _K
     hwnd = _hwnd_con_titulo(_TITULO_POPUP_LICENCIA)
     if not hwnd:
         return
     print("  Popup sesión múltiple — continuando sin cerrar otras sesiones...")
 
     win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
-    tid_yo = win32api.GetCurrentThreadId()
-    tid_el = win32process.GetWindowThreadProcessId(hwnd)[0]
-    ctypes.windll.user32.AttachThreadInput(tid_yo, tid_el, True)
     win32gui.SetForegroundWindow(hwnd)
-    ctypes.windll.user32.SetFocus(hwnd)   # forzar foco en el diálogo
     time.sleep(_SLEEP_SAP)
-    ctypes.windll.user32.AttachThreadInput(tid_yo, tid_el, False)
 
-    # Cancelar (opción 3) siempre viene seleccionada al abrirse el diálogo.
-    # Up×1 sube a opción 2 "Continuar sin finalizar entradas existentes".
-    _kbd = _KbdCtrl()
-    _kbd.press(_K.up); _kbd.release(_K.up)
-    time.sleep(_SLEEP_LARGO)              # pausa visible antes de confirmar
-    _kbd.press(_K.enter); _kbd.release(_K.enter)
+    # Detectar posición del foco
+    nombre_foco = ""
+    try:
+        from pywinauto import Desktop
+        foco = Desktop(backend="uia").get_focus()
+        nombre_foco = (foco.element_info.name or "").lower()
+        _log.debug("Popup licencia — foco en: %r", nombre_foco)
+    except Exception as _e:
+        _log.debug("No se pudo leer foco: %s", _e)
+
+    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+    ancho = right - left
+    alto  = bottom - top
+
+    # Clic en opción 2 "Continuar sin finalizar entradas existentes"
+    print(f"  Clic opción 2 ({int(ancho*0.50)}x, {int(alto*_POPUP_RATIO_OPCION2)}y)")
+    _clic_fisico(left + int(ancho * 0.50), top + int(alto * _POPUP_RATIO_OPCION2))
+    time.sleep(_SLEEP_LARGO)
+
+    # Clic en botón ✓ confirmar
+    print(f"  Clic ✓ ({int(ancho*_POPUP_RATIO_BTN_X)}x, {int(alto*_POPUP_RATIO_BTN_Y)}y)")
+    _clic_fisico(left + int(ancho * _POPUP_RATIO_BTN_X),
+                 top  + int(alto  * _POPUP_RATIO_BTN_Y))
     time.sleep(_SLEEP_SAP)
 
 
@@ -911,21 +924,33 @@ def main():
     resultados = []
     for banco in bancos_a_procesar:
         nombre = banco["nombre"]
-        _log.info("=== Inicio %s %s-%s ===", nombre, fecha_desde, fecha_hasta)
-        try:
-            procesados, errores = procesar_banco(banco, fecha_desde, fecha_hasta, max_docs=max_docs)
-            resultados.append({"banco": nombre, "procesados": procesados, "errores": errores})
-            _log.info("%s: procesados=%d errores=%d", nombre, len(procesados), len(errores))
-            _notificar(notif, nombre, procesados, errores,
-                       _build_registros(banco, procesados, errores))
-        except Exception as e:
-            msg = str(e)
-            _log.error("ERROR CRÍTICO %s: %s", nombre, msg, exc_info=True)
-            print(f"\n  ✗ Error en {nombre}: {msg}")
-            resultados.append({"banco": nombre, "procesados": [],
-                                "errores": [{"doc": "—", "error": msg}]})
-            _notificar_error(notif, nombre, msg)
-            continue   # sigue con el siguiente banco
+        for intento in range(1, _MAX_INTENTOS_BANCO + 1):
+            if intento > 1:
+                _log.warning("REINTENTO %d/%d %s — esperando %.0fs",
+                             intento, _MAX_INTENTOS_BANCO, nombre, _SLEEP_REINTENTO_BANCO)
+                print(f"  [↺] Reintento {intento}/{_MAX_INTENTOS_BANCO} {nombre}...")
+                time.sleep(_SLEEP_REINTENTO_BANCO)
+            _log.info("=== Inicio %s %s-%s === (intento %d/%d)",
+                      nombre, fecha_desde, fecha_hasta, intento, _MAX_INTENTOS_BANCO)
+            try:
+                procesados, errores = procesar_banco(banco, fecha_desde, fecha_hasta, max_docs=max_docs)
+                resultados.append({"banco": nombre, "procesados": procesados, "errores": errores})
+                _log.info("%s: procesados=%d errores=%d", nombre, len(procesados), len(errores))
+                _notificar(notif, nombre, procesados, errores,
+                           _build_registros(banco, procesados, errores))
+                break   # éxito → siguiente banco
+            except Exception as e:
+                msg = str(e)
+                if intento < _MAX_INTENTOS_BANCO:
+                    _log.warning("Intento %d/%d %s: %s", intento, _MAX_INTENTOS_BANCO, nombre, msg)
+                    print(f"  [!] Error intento {intento}/{_MAX_INTENTOS_BANCO} {nombre}: {msg}")
+                else:
+                    _log.error("ERROR CRÍTICO %s tras %d intentos: %s",
+                               nombre, _MAX_INTENTOS_BANCO, msg, exc_info=True)
+                    print(f"\n  ✗ Error en {nombre}: {msg}")
+                    resultados.append({"banco": nombre, "procesados": [],
+                                       "errores": [{"doc": "—", "error": msg}]})
+                    _notificar_error(notif, nombre, msg)
 
     imprimir_resumen(resultados)
 

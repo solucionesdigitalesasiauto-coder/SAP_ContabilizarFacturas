@@ -582,19 +582,22 @@ def salir_tabla():
         time.sleep(_SLEEP_LARGO)
 
 def siguiente_pestana():
-    """Avanza a la siguiente pestaña en FB60 con Ctrl+Shift+AvPág (pynput).
-
-    Returns:
-        None
-
-    Hardcoded:
-        - 0.8: espera tras cambio de pestaña (TIMING)
-    """
+    """Avanza a la siguiente pestaña en FB60 con Ctrl+Shift+AvPág (pynput)."""
     with _kb.pressed(Key.ctrl):
         with _kb.pressed(Key.shift):
             time.sleep(_SLEEP_CORTO)
             _kb.press(Key.page_down)
             _kb.release(Key.page_down)
+    time.sleep(_SLEEP_PESTANA)
+
+
+def pestana_anterior():
+    """Retrocede a la pestaña anterior en FB60 con Ctrl+Shift+RePág (pynput)."""
+    with _kb.pressed(Key.ctrl):
+        with _kb.pressed(Key.shift):
+            time.sleep(_SLEEP_CORTO)
+            _kb.press(Key.page_up)
+            _kb.release(Key.page_up)
     time.sleep(_SLEEP_PESTANA)
 
 def ctrl_s():
