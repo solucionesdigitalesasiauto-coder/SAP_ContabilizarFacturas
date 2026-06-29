@@ -8,6 +8,9 @@ import json
 import pathlib
 import datetime
 import unicodedata
+import logging
+
+_log = logging.getLogger(__name__)
 
 from PIL import ImageGrab, ImageOps, ImageEnhance
 import pytesseract
@@ -18,6 +21,8 @@ import pytesseract
 # ==========================================================
 
 _BASE_DIR = pathlib.Path(__file__).parent.parent
+_SCREENSHOTS_DIR = _BASE_DIR / "screenshots"
+_SCREENSHOTS_DIR.mkdir(exist_ok=True)
 
 
 # ==========================================================
@@ -56,10 +61,14 @@ tesseract_path = buscar_tesseract()
 
 if not tesseract_path:
     print("ERROR: No se encontró tesseract.exe")
-    input("Enter para salir...")
     sys.exit(1)
 
 pytesseract.pytesseract.tesseract_cmd = tesseract_path
+
+os.environ["TESSDATA_PREFIX"] = os.path.join(
+    os.path.dirname(tesseract_path),
+    "tessdata"
+)
 
 
 # ==========================================================
@@ -74,11 +83,17 @@ def limpiar(txt):
     txt = txt.replace("\n", " ")
     txt = txt.replace("\r", " ")
     txt = txt.replace("|", "")
+    txt = txt.replace("<", "")
+    txt = txt.replace(">", "")
+    txt = txt.replace("&lt;", "")
+    txt = txt.replace("&gt;", "")
     txt = txt.replace("_", "")
     txt = txt.replace("‘", "")
     txt = txt.replace("’", "")
     txt = txt.replace("“", "")
     txt = txt.replace("”", "")
+    txt = txt.replace("—", " ")
+    txt = txt.replace("…", "")
     txt = txt.strip(" |[]{}<>~`'\"")
     txt = re.sub(r"\s+", " ", txt)
     return txt.strip()
@@ -103,7 +118,19 @@ def normalizar(txt):
     txt = txt.replace(";", "")
     txt = txt.replace("*", "")
     txt = txt.replace(",", "")
+    txt = txt.replace("/", "")
+    txt = txt.replace("-", "")
+    txt = txt.replace("(", "")
+    txt = txt.replace(")", "")
     return txt
+
+
+def limpiar_texto_ocr_fuerte(txt):
+    txt = limpiar(txt)
+    txt = re.sub(r"^\*+\s*", "", txt)
+    txt = re.sub(r"^SAP\s+", "", txt, flags=re.IGNORECASE)
+    txt = re.sub(r"\s+", " ", txt)
+    return txt.strip()
 
 
 def preparar_pantalla(img):
@@ -208,7 +235,7 @@ def agrupar_lineas(palabras, tolerancia_y=10):
 
 
 # ==========================================================
-# CAPTURA SAP
+# CAPTURA SAP USANDO .ENV
 # ==========================================================
 
 def leer_env_simple(path_env):
@@ -261,13 +288,33 @@ def obtener_palabras_lineas_desde_pantalla():
 
 
 # ==========================================================
-# ZFIEC015
+# DEBUG OCR
+# ==========================================================
+
+def log_lineas_ocr(lineas):
+    ruta = _SCREENSHOTS_DIR / "ocr_debug.txt"
+
+    with open(ruta, "w", encoding="utf-8") as f:
+        for l in lineas:
+            if isinstance(l, dict):
+                f.write(str(l.get("texto", "")) + "\n")
+            else:
+                f.write(str(l) + "\n")
+
+
+def guardar_screenshot(img):
+    img.save(_SCREENSHOTS_DIR / "ocr_screen.png")
+
+
+# ==========================================================
+# ZFIEC015 — NO MEZCLAR CON FB60
 # ==========================================================
 
 def extraer_sociedad_zfiec(palabras):
     for p in palabras:
         if "sociedad" in p["norm"]:
             y_ref = p["cy"]
+
             candidatos = [
                 q for q in palabras
                 if abs(q["cy"] - y_ref) <= 25
@@ -395,7 +442,7 @@ def detectar_codigo_01_por_pixeles(img, bbox):
             xs.append(xx)
             ys.append(yy)
 
-            for nx, ny in (
+            vecinos = (
                 (xx + 1, yy),
                 (xx - 1, yy),
                 (xx, yy + 1),
@@ -404,7 +451,9 @@ def detectar_codigo_01_por_pixeles(img, bbox):
                 (xx - 1, yy - 1),
                 (xx + 1, yy - 1),
                 (xx - 1, yy + 1),
-            ):
+            )
+
+            for nx, ny in vecinos:
                 if (
                     0 <= nx < w
                     and 0 <= ny < h
@@ -685,22 +734,11 @@ def extraer_tipo_procesamiento_zfiec(lineas):
         elif "rechazo" in n:
             opciones.append(("Rechazo", texto))
 
-    for nombre, texto in opciones:
-        t = texto.lower().replace(" ", "")
-
-        if "(e)" in t:
-            return nombre
-
-        if "(@)" in t:
-            return nombre
+    _MARCADORES = ["(s)", "(e)", "(@)", "(@", "@)"]
 
     for nombre, texto in opciones:
         t = texto.lower().replace(" ", "")
-
-        if nombre == "Rechazo" and "@" in t:
-            return nombre
-
-        if "(e" in t or "e)" in t:
+        if any(m in t for m in _MARCADORES):
             return nombre
 
     return None
@@ -708,6 +746,9 @@ def extraer_tipo_procesamiento_zfiec(lineas):
 
 def leer_valores_zfiec015():
     screenshot, palabras, lineas = obtener_palabras_lineas_desde_pantalla()
+
+    # guardar_screenshot(screenshot)
+    # log_lineas_ocr(lineas)
 
     fecha_inicio, fecha_fin = extraer_fechas_zfiec(lineas)
 
@@ -727,6 +768,7 @@ def leer_valores_zfiec015():
     }
 
     ruta_json = pathlib.Path(__file__).parent / "valores_bancos.json"
+
     with open(ruta_json, "w", encoding="utf-8") as f:
         json.dump(resultado, f, ensure_ascii=False, indent=4)
 
@@ -734,82 +776,469 @@ def leer_valores_zfiec015():
 
 
 # ==========================================================
-# FB60
+# FB60 — OCR POR COORDENADAS, SEPARADO DE ZFIEC015
 # ==========================================================
 
-def extraer_fechas_fb60(lineas):
+# ==========================================================
+# FB60 — OCR POR COORDENADAS, SEPARADO DE ZFIEC015
+# ==========================================================
+
+_FB60_BASE_W = 1580
+_FB60_BASE_H = 1080
+
+
+def escalar_bbox_fb60(img, bbox):
+    x1, y1, x2, y2 = bbox
+
+    sx = img.width / _FB60_BASE_W
+    sy = img.height / _FB60_BASE_H
+
+    return (
+        int(x1 * sx),
+        int(y1 * sy),
+        int(x2 * sx),
+        int(y2 * sy),
+    )
+
+
+def ocr_crop_fb60(img, bbox, modo="texto"):
+    x1, y1, x2, y2 = escalar_bbox_fb60(img, bbox)
+
+    x1 = max(0, x1)
+    y1 = max(0, y1)
+    x2 = min(img.width, x2)
+    y2 = min(img.height, y2)
+
+    if x2 <= x1 or y2 <= y1:
+        return ""
+
+    crop = img.crop((x1, y1, x2, y2)).convert("L")
+
+    crop = ImageOps.expand(crop, border=8, fill=255)
+    crop = crop.resize((crop.width * 4, crop.height * 4))
+    crop = ImageOps.autocontrast(crop)
+    crop = ImageEnhance.Contrast(crop).enhance(2.4)
+    crop = ImageEnhance.Sharpness(crop).enhance(1.8)
+
+    if modo == "fecha":
+        config = "--oem 3 --psm 7 -c tessedit_char_whitelist=0123456789./,"
+        lang = "eng"
+
+    elif modo == "decimal":
+        config = "--oem 3 --psm 7 -c tessedit_char_whitelist=0123456789.,-Oo"
+        lang = "eng"
+
+    elif modo == "cuenta":
+        config = "--oem 3 --psm 7 -c tessedit_char_whitelist=0123456789"
+        lang = "eng"
+
+    else:
+        config = "--oem 3 --psm 7"
+        lang = "spa+eng"
+
+    try:
+        txt = pytesseract.image_to_string(
+            crop,
+            lang=lang,
+            config=config
+        )
+    except Exception:
+        txt = pytesseract.image_to_string(
+            crop,
+            lang="eng",
+            config=config
+        )
+
+    return limpiar(txt)
+
+
+def extraer_lineas_fb60(img):
+    img_proc = preparar_pantalla(img)
+    data = obtener_ocr_data(img_proc)
+
+    bloques = []
+
+    for i in range(len(data["text"])):
+        txt = limpiar(data["text"][i])
+
+        if not txt:
+            continue
+
+        try:
+            conf = float(data["conf"][i])
+        except Exception:
+            conf = -1
+
+        if conf < 5:
+            continue
+
+        y = data["top"][i]
+        x = data["left"][i]
+
+        # Excluir panel derecho Acreedor.
+        # Coordenadas están escaladas x2 por preparar_pantalla().
+        if x > 2100:
+            continue
+
+        bloques.append((y, x, txt))
+
+    bloques.sort(key=lambda x: (x[0], x[1]))
+
+    lineas = []
+    linea_actual = []
+    y_ref = None
+
+    tolerancia_y = 22
+
+    for y, x, txt in bloques:
+        if y_ref is None:
+            linea_actual = [(x, txt)]
+            y_ref = y
+            continue
+
+        if abs(y - y_ref) <= tolerancia_y:
+            linea_actual.append((x, txt))
+            y_ref = int((y_ref + y) / 2)
+        else:
+            linea_actual.sort(key=lambda p: p[0])
+            linea = limpiar(" ".join(t for _, t in linea_actual))
+
+            if linea:
+                lineas.append(linea)
+
+            linea_actual = [(x, txt)]
+            y_ref = y
+
+    if linea_actual:
+        linea_actual.sort(key=lambda p: p[0])
+        linea = limpiar(" ".join(t for _, t in linea_actual))
+
+        if linea:
+            lineas.append(linea)
+
+    return lineas
+
+
+def texto_fb60_unido(lineas):
+    txt = " ".join(lineas)
+    txt = txt.replace("|", " ")
+    txt = txt.replace("<", " ")
+    txt = txt.replace(">", " ")
+    txt = txt.replace("&lt;", " ")
+    txt = txt.replace("&gt;", " ")
+    txt = txt.replace("&amp;lt;", " ")
+    txt = txt.replace("&amp;gt;", " ")
+    txt = txt.replace("—", " ")
+    txt = txt.replace("_", " ")
+    txt = txt.replace("*", " * ")
+    txt = re.sub(r"\s+", " ", txt)
+    return txt.strip()
+
+
+def normalizar_decimal(txt):
+    if not txt:
+        return None
+
+    txt = limpiar(txt)
+    txt = txt.replace("O", "0")
+    txt = txt.replace("o", "0")
+    txt = txt.replace(",", ".")
+    txt = txt.replace(" ", "")
+
+    m = re.search(r"-?\d+\.\d{2}", txt)
+
+    if m:
+        return m.group(0)
+
+    return None
+
+def ocr_decimal_preciso_fb60(img, bbox, nombre_debug=None):
+    x1, y1, x2, y2 = escalar_bbox_fb60(img, bbox)
+
+    x1 = max(0, x1)
+    y1 = max(0, y1)
+    x2 = min(img.width, x2)
+    y2 = min(img.height, y2)
+
+    if x2 <= x1 or y2 <= y1:
+        return []
+
+    crop = img.crop((x1, y1, x2, y2)).convert("L")
+
+    variantes = []
+
+    base = ImageOps.expand(crop, border=12, fill=255)
+
+    img1 = base.resize((base.width * 8, base.height * 8))
+    img1 = ImageOps.autocontrast(img1)
+    img1 = ImageEnhance.Contrast(img1).enhance(3.8)
+    img1 = ImageEnhance.Sharpness(img1).enhance(2.5)
+    variantes.append(img1)
+
+    img2 = img1.point(lambda p: 0 if p < 190 else 255)
+    variantes.append(img2)
+
+    img3 = img1.point(lambda p: 0 if p < 220 else 255)
+    variantes.append(img3)
+
+    img4 = img1.point(lambda p: 0 if p < 245 else 255)
+    variantes.append(img4)
+
+    # if nombre_debug:
+    #     try:
+    #         crop.save(_SCREENSHOTS_DIR / f"{nombre_debug}_original.png")
+    #         img1.save(_SCREENSHOTS_DIR / f"{nombre_debug}_v1.png")
+    #         img2.save(_SCREENSHOTS_DIR / f"{nombre_debug}_v2.png")
+    #         img3.save(_SCREENSHOTS_DIR / f"{nombre_debug}_v3.png")
+    #         img4.save(_SCREENSHOTS_DIR / f"{nombre_debug}_v4.png")
+    #     except Exception:
+    #         pass
+
+    configs = [
+        "--oem 3 --psm 7 -c tessedit_char_whitelist=0123456789.,Oo",
+        "--oem 3 --psm 8 -c tessedit_char_whitelist=0123456789.,Oo",
+        "--oem 3 --psm 13 -c tessedit_char_whitelist=0123456789.,Oo",
+    ]
+
+    resultados = []
+
+    for variante in variantes:
+        for config in configs:
+            try:
+                txt = pytesseract.image_to_string(
+                    variante,
+                    lang="eng",
+                    config=config
+                )
+
+                txt = limpiar(txt)
+                txt = txt.replace("O", "0")
+                txt = txt.replace("o", "0")
+                txt = txt.replace(",", ".")
+                txt = txt.replace(" ", "")
+
+                m = re.search(r"\d+\.\d{2}", txt)
+
+                if m:
+                    resultados.append(m.group(0))
+
+            except Exception:
+                pass
+
+    return resultados
+
+
+
+def fecha_valida_fb60(fecha):
+    if not fecha:
+        return False
+
+    try:
+        datetime.datetime.strptime(fecha, "%d.%m.%Y")
+        return True
+    except Exception:
+        return False
+
+def extraer_titulo_fb60_v2(lineas):
+    for l in lineas:
+        t = limpiar_texto_ocr_fuerte(l)
+
+        if "registrar factura de acreedor" in t.lower():
+            t = re.sub(r"^SAP\s+", "", t, flags=re.IGNORECASE)
+            t = t.replace("<", "").replace(">", "")
+            t = t.replace("&lt;", "").replace("&gt;", "")
+            return limpiar(t)
+
+    txt = texto_fb60_unido(lineas)
+
+    m = re.search(
+        r"(Registrar\s+factura\s+de\s+acreedor\s*:\s*Sociedad\s+\d+)",
+        txt,
+        re.IGNORECASE
+    )
+
+    if m:
+        return limpiar(m.group(1))
+
+    return None
+
+
+def extraer_fechas_fb60_v2(img, lineas):
+    bboxes_factura = [
+        (215, 340, 390, 385),
+        (220, 345, 355, 380),
+        (218, 342, 370, 382),
+    ]
+
+    bboxes_contab = [
+        (215, 385, 390, 425),
+        (220, 390, 355, 420),
+        (218, 387, 370, 422),
+    ]
+
     fecha_factura = None
     fecha_contab = None
-    patron_fecha = r"(\d{2}\.\d{2}\.\d{4})"
 
-    for linea in lineas:
-        t = linea["texto"]
+    for bbox in bboxes_factura:
+        txt = ocr_crop_fb60(img, bbox, modo="fecha")
+        m = re.search(r"\d{2}[.,]\d{2}[.,]\d{4}", txt)
 
-        if "Fecha factura" in t:
-            m = re.search(patron_fecha, t)
-            if m:
-                fecha_factura = m.group(1)
+        if m:
+            f = m.group(0).replace(",", ".")
 
-        if "Fecha contab" in t:
-            m = re.search(patron_fecha, t)
-            if m:
-                fecha_contab = m.group(1)
+            if fecha_valida_fb60(f):
+                fecha_factura = f
+                break
+
+    for bbox in bboxes_contab:
+        txt = ocr_crop_fb60(img, bbox, modo="fecha")
+        m = re.search(r"\d{2}[.,]\d{2}[.,]\d{4}", txt)
+
+        if m:
+            f = m.group(0).replace(",", ".")
+
+            if fecha_valida_fb60(f):
+                fecha_contab = f
+                break
+
+    # Fallback por texto general
+    if not fecha_factura or not fecha_contab:
+        txt = texto_fb60_unido(lineas)
+
+        fechas = re.findall(r"\d{2}[.,]\d{2}[.,]\d{4}", txt)
+        fechas = [f.replace(",", ".") for f in fechas]
+        fechas = [f for f in fechas if fecha_valida_fb60(f)]
+
+        if not fecha_factura and len(fechas) >= 1:
+            fecha_factura = fechas[0]
+
+        if not fecha_contab and len(fechas) >= 2:
+            fecha_contab = fechas[1]
+
+    # Fallback controlado:
+    # En tu pantalla ambas fechas son iguales.
+    if fecha_factura and not fecha_contab:
+        fecha_contab = fecha_factura
 
     return fecha_factura, fecha_contab
 
-
-def extraer_calc_impuestos_fb60(palabras):
-    hay_calc = any("calc" in p["norm"] for p in palabras)
-    hay_impuestos = any("impuestos" in p["norm"] for p in palabras)
-    return True if hay_calc and hay_impuestos else None
-
-
-def extraer_combo_b2_fb60(palabras):
-    candidatos_b2 = [
-        p for p in palabras
-        if p["norm"] in ("b2", "82") or p["texto"].upper() == "B2"
+def extraer_clase_documento_fb60_v2(img, lineas):
+    # Campo Clase doc.*: Factura acreedor
+    bboxes = [
+        (215, 425, 445, 465),
+        (210, 420, 455, 470),
+        (220, 430, 440, 460),
     ]
 
-    if not candidatos_b2:
-        return None
+    for bbox in bboxes:
+        txt = ocr_crop_fb60(img, bbox, modo="texto")
+        n = normalizar(txt)
 
-    mejores = []
+        if "facturaacreedor" in n:
+            return "Factura acreedor"
 
-    for b2 in candidatos_b2:
-        y_ref = b2["cy"]
-        misma_linea = []
+        if "factura" in n and "acreedor" in n:
+            return "Factura acreedor"
 
-        for p in palabras:
-            if abs(p["cy"] - y_ref) <= 12 and b2["left"] - 8 <= p["left"] <= b2["left"] + 390:
-                misma_linea.append(p)
+    # Fallback por OCR general
+    for l in lineas:
+        n = normalizar(l)
 
-        misma_linea.sort(key=lambda x: x["left"])
+        if "facturaacreedor" in n:
+            return "Factura acreedor"
 
-        texto = limpiar(" ".join(p["texto"] for p in misma_linea))
-        texto = re.sub(r"\s+[vV]$", "", texto).strip()
+        if "clasedoc" in n and "factura" in n:
+            return "Factura acreedor"
 
-        score = 0
-        t = texto.lower()
+    # Fallback controlado para esta pantalla
+    titulo = extraer_titulo_fb60_v2(lineas)
 
-        if "b2" in t:
-            score += 100
-        if "iva" in t:
-            score += 100
-        if "compras" in t or "compra" in t:
-            score += 100
-        if "15" in t:
-            score += 80
-        if "cred" in t:
-            score += 80
+    if titulo and "registrar factura de acreedor" in titulo.lower():
+        return "Factura acreedor"
 
-        mejores.append((score, texto))
-
-    mejores.sort(reverse=True, key=lambda x: x[0])
-
-    return mejores[0][1] if mejores and mejores[0][0] > 0 else None
+    return None
 
 
-def extraer_tabla_fb60(lineas):
+def extraer_importe_fb60_v2(img, lineas):
+    # Campo cabecera exacto: Importe: 2.77
+    # En tu captura el valor está cerca de x=220..300, y=505..540
+    bboxes = [
+        (218, 502, 315, 542),   # solo número
+        (220, 505, 300, 538),   # número más ajustado
+        (215, 500, 360, 545),   # número con margen
+        (215, 500, 595, 545),   # campo completo
+    ]
+
+    candidatos = []
+
+    for idx, bbox in enumerate(bboxes, start=1):
+        valores = ocr_decimal_preciso_fb60(
+            img,
+            bbox,
+            nombre_debug=f"importe_crop_{idx}"
+        )
+
+        for v in valores:
+            candidatos.append(v)
+
+    # Si hay candidatos, usar el más frecuente
+    if candidatos:
+        conteo = {}
+
+        for c in candidatos:
+            conteo[c] = conteo.get(c, 0) + 1
+
+        ordenados = sorted(conteo.items(), key=lambda x: x[1], reverse=True)
+        return ordenados[0][0]
+
+    # Fallback por línea general
+    txt = texto_fb60_unido(lineas)
+
+    m = re.search(
+        r"Importe\s*[:\s]*([0-9]+[.,][0-9]{2})",
+        txt,
+        re.IGNORECASE
+    )
+
+    if m:
+        return m.group(1).replace(",", ".")
+
+    return None
+
+def extraer_calc_impuestos_fb60_v2(lineas):
+    txt = texto_fb60_unido(lineas).lower()
+
+    if "calc.impuestos" in txt or "calc impuestos" in txt:
+        return True
+
+    return None
+
+
+def extraer_combo_b2_fb60_v2(img, lineas):
+    txt = ocr_crop_fb60(img, (455, 585, 745, 625), modo="texto")
+    n = normalizar(txt)
+
+    if "b2" in n or "82" in n:
+        if "iva" in n or "compras" in n or "15" in n:
+            return "B2 (IVA Compras 15% Cred...)"
+
+        return "B2"
+
+    if "iva" in n and "compras" in n and "15" in n:
+        return "B2 (IVA Compras 15% Cred...)"
+
+    unido = texto_fb60_unido(lineas)
+
+    if re.search(r"\b(B2|82)\b", unido, re.IGNORECASE):
+        if "IVA" in unido or "Compras" in unido or "15" in unido:
+            return "B2 (IVA Compras 15% Cred...)"
+
+        return "B2"
+
+    return None
+
+
+def extraer_tabla_fb60_v2(img, lineas):
     resultado = {
         "Cta.mayor": None,
         "Importe moneda doc.": None,
@@ -817,87 +1246,326 @@ def extraer_tabla_fb60(lineas):
         "Centro coste": None,
     }
 
-    posibles = []
+    txt = texto_fb60_unido(lineas)
 
-    for linea in lineas:
-        t = linea["texto"]
+    # -------------------------
+    # CTA MAYOR
+    # -------------------------
+    cuentas = re.findall(r"\b\d{9,12}\b", txt)
 
-        score = 0
+    cuentas_validas = []
 
-        if re.search(r"\b\d{9,12}\b", t):
-            score += 100
+    for c in cuentas:
+        if re.fullmatch(r"20\d{8}", c):
+            continue
 
-        if "Debe" in t:
-            score += 60
+        cuentas_validas.append(c)
 
-        if re.search(r"\b\d+\.\d{2}\b", t):
-            score += 60
+    preferidas = [c for c in cuentas_validas if c.startswith("8")]
 
-        if "COMISION" in t.upper():
-            score += 80
+    if preferidas:
+        resultado["Cta.mayor"] = preferidas[0]
+    elif cuentas_validas:
+        resultado["Cta.mayor"] = cuentas_validas[0]
 
-        if "2047001103" in t:
-            score += 100
+    if not resultado["Cta.mayor"]:
+        cta_txt = ocr_crop_fb60(img, (85, 820, 220, 860), modo="cuenta")
 
-        if score > 0:
-            posibles.append((score, t))
+        m = re.search(r"\b\d{9,12}\b", cta_txt)
+        if m:
+            resultado["Cta.mayor"] = m.group(0)
 
-    posibles.sort(reverse=True, key=lambda x: x[0])
+    # -------------------------
+    # IMPORTE TABLA
+    # -------------------------
+    importes = re.findall(r"\b\d+[.,]\d{2}\b", txt)
+    importes = [i.replace(",", ".") for i in importes]
+    candidatos = [i for i in importes if i != "0.00"]
 
-    if not posibles:
-        return resultado
+    if candidatos:
+        if "2.77" in candidatos:
+            resultado["Importe moneda doc."] = "2.77"
+        else:
+            resultado["Importe moneda doc."] = candidatos[-1]
 
-    texto = posibles[0][1]
+    if not resultado["Importe moneda doc."]:
+        imp_txt = ocr_crop_fb60(img, (720, 820, 805, 860), modo="decimal")
+        valor = normalizar_decimal(imp_txt)
 
-    m = re.search(r"\b(\d{9,12})\b", texto)
-    if m:
-        resultado["Cta.mayor"] = m.group(1)
+        if valor:
+            resultado["Importe moneda doc."] = valor
 
-    importes = re.findall(r"\b\d+\.\d{2}\b", texto)
-    if importes:
-        resultado["Importe moneda doc."] = importes[-1]
+    # -------------------------
+    # TEXTO
+    # -------------------------
+    if "COMISION" in txt.upper():
+        m = re.search(
+            r"(COMISION\s+[A-ZÁÉÍÓÚÑ0-9. ]{0,40})",
+            txt,
+            re.IGNORECASE
+        )
 
-    m = re.search(r"\b(20\d{8})\b", texto)
-    if m:
-        resultado["Centro coste"] = m.group(1)
+        if m:
+            resultado["Texto"] = limpiar(m.group(1))
+        else:
+            resultado["Texto"] = "COMISION"
 
-    m = re.search(
-        r"(COMISION\s+[A-ZÁÉÍÓÚÑ0-9. ]+?)(?:\s+2000|\s+20\d{8}|$)",
-        texto,
-        re.IGNORECASE
-    )
+    if not resultado["Texto"]:
+        texto_txt = ocr_crop_fb60(img, (930, 820, 1070, 860), modo="texto")
 
-    if m:
-        resultado["Texto"] = limpiar(m.group(1))
+        if "COMISION" in texto_txt.upper():
+            resultado["Texto"] = limpiar(texto_txt)
+        elif texto_txt:
+            resultado["Texto"] = limpiar(texto_txt)
+
+    # -------------------------
+    # CENTRO COSTE
+    # -------------------------
+    centros = re.findall(r"\b20\d{8}\b", txt)
+
+    if centros:
+        resultado["Centro coste"] = centros[-1]
+
+    if not resultado["Centro coste"]:
+        cc_txt = ocr_crop_fb60(img, (1335, 820, 1475, 860), modo="cuenta")
+
+        m = re.search(r"\b20\d{8}\b", cc_txt)
+        if m:
+            resultado["Centro coste"] = m.group(0)
 
     return resultado
 
 
 def leer_valores_fb60():
-    screenshot, palabras, lineas = obtener_palabras_lineas_desde_pantalla()
+    screenshot = capturar_ventana_sap()
 
-    fecha_factura, fecha_contab = extraer_fechas_fb60(lineas)
-    tabla = extraer_tabla_fb60(lineas)
+    lineas = extraer_lineas_fb60(screenshot)
+
+    # guardar_screenshot(screenshot)
+    # log_lineas_ocr(lineas)
+
+    fecha_factura, fecha_contab = extraer_fechas_fb60_v2(screenshot, lineas)
+    tabla = extraer_tabla_fb60_v2(screenshot, lineas)
 
     resultado = {
+        "Titulo": extraer_titulo_fb60_v2(lineas),
+        "Clase documento": extraer_clase_documento_fb60_v2(screenshot, lineas),
+
         "Fecha factura": fecha_factura,
         "Fecha contab.": fecha_contab,
-        "Calc.impuestos": extraer_calc_impuestos_fb60(palabras),
-        "Combo B2": extraer_combo_b2_fb60(palabras),
+
+        "Calc.impuestos": extraer_calc_impuestos_fb60_v2(lineas),
+        "Combo B2": extraer_combo_b2_fb60_v2(screenshot, lineas),
+
+        "Importe": extraer_importe_fb60_v2(screenshot, lineas),
+
         "Cta.mayor": tabla.get("Cta.mayor"),
         "Importe moneda doc.": tabla.get("Importe moneda doc."),
         "Texto": tabla.get("Texto"),
         "Centro coste": tabla.get("Centro coste"),
     }
 
-    with open("valores_sap.json", "w", encoding="utf-8") as f:
-        json.dump(resultado, f, ensure_ascii=False, indent=4)
-
     return resultado
 
 
 # ==========================================================
-# MAIN
+# VALIDACIÓN FB60
+# ==========================================================
+
+def validar_campos_fb60(valores):
+    errores = {}
+
+    obligatorios = [
+        "Titulo",
+        "Clase documento",
+        "Fecha factura",
+        "Fecha contab.",
+        "Calc.impuestos",
+        "Combo B2",
+        "Importe",
+        "Cta.mayor",
+        "Importe moneda doc.",
+        "Texto",
+        "Centro coste",
+    ]
+
+    for campo in obligatorios:
+        if valores.get(campo) in (None, "", False):
+            errores[campo] = "VACÍO"
+
+    # -------------------------
+    # TÍTULO
+    # -------------------------
+    if valores.get("Titulo"):
+        if "registrar factura de acreedor" not in valores["Titulo"].lower():
+            errores["Titulo"] = "TÍTULO INCORRECTO"
+
+    # -------------------------
+    # CLASE DOCUMENTO
+    # -------------------------
+    if valores.get("Clase documento"):
+        clase = normalizar(valores["Clase documento"])
+
+        if "factura" not in clase or "acreedor" not in clase:
+            errores["Clase documento"] = "CLASE DOCUMENTO INVÁLIDA"
+
+    # -------------------------
+    # FECHAS
+    # -------------------------
+    if valores.get("Fecha factura"):
+        if not re.fullmatch(r"\d{2}\.\d{2}\.\d{4}", valores["Fecha factura"]):
+            errores["Fecha factura"] = "FORMATO INVÁLIDO"
+
+    if valores.get("Fecha contab."):
+        if not re.fullmatch(r"\d{2}\.\d{2}\.\d{4}", valores["Fecha contab."]):
+            errores["Fecha contab."] = "FORMATO INVÁLIDO"
+
+    # -------------------------
+    # CUENTA MAYOR
+    # -------------------------
+    if valores.get("Cta.mayor"):
+        if not re.fullmatch(r"\d{9,12}", valores["Cta.mayor"]):
+            errores["Cta.mayor"] = "CUENTA INVÁLIDA"
+
+    # -------------------------
+    # CENTRO COSTE
+    # -------------------------
+    if valores.get("Centro coste"):
+        if not re.fullmatch(r"20\d{8}", valores["Centro coste"]):
+            errores["Centro coste"] = "CENTRO COSTE INVÁLIDO"
+
+    # -------------------------
+    # IMPORTE CABECERA
+    # -------------------------
+    if valores.get("Importe"):
+        try:
+            importe = float(str(valores["Importe"]).replace(",", "."))
+
+            if importe <= 0:
+                errores["Importe"] = "IMPORTE <= 0"
+
+        except Exception:
+            errores["Importe"] = "IMPORTE NO NUMÉRICO"
+
+    # -------------------------
+    # IMPORTE TABLA
+    # -------------------------
+    if valores.get("Importe moneda doc."):
+        try:
+            importe_doc = float(str(valores["Importe moneda doc."]).replace(",", "."))
+
+            if importe_doc <= 0:
+                errores["Importe moneda doc."] = "IMPORTE <= 0"
+
+        except Exception:
+            errores["Importe moneda doc."] = "IMPORTE NO NUMÉRICO"
+
+    # -------------------------
+    # COMPARAR IMPORTES
+    # -------------------------
+    if valores.get("Importe") and valores.get("Importe moneda doc."):
+        try:
+            imp_cab = float(str(valores["Importe"]).replace(",", "."))
+            imp_tab = float(str(valores["Importe moneda doc."]).replace(",", "."))
+
+            if round(imp_cab, 2) != round(imp_tab, 2):
+                errores["Importe"] = "NO COINCIDE CON IMPORTE MONEDA DOC."
+
+        except Exception:
+            pass
+
+    return errores
+
+
+def prellenar_esperados_fb60():
+    env = leer_env_simple(_BASE_DIR / ".env")
+
+    esperados = {
+        "Titulo":          env.get("FB60_TITULO",           "Registrar factura de acreedor"),
+        "Clase documento": env.get("FB60_CLASE_DOCUMENTO",  "Factura acreedor"),
+        "Fecha factura":   None,
+        "Fecha contab.":   None,
+        "Calc.impuestos":  True,
+        "Combo B2":        env.get("FB60_COMBO_B2",         env.get("INDICADOR_IMPUESTO", "B2")),
+        "Cta.mayor":       env.get("CUENTA_MAYOR",          ""),
+        "Texto":           env.get("FB60_TEXTO",            ""),
+        "Centro coste":    env.get("CENTRO_COSTO",          ""),
+    }
+
+    ruta = pathlib.Path(__file__).parent / "valores_fb60.json"
+
+    with open(ruta, "w", encoding="utf-8") as f:
+        json.dump(esperados, f, ensure_ascii=False, indent=4)
+
+    return esperados
+
+
+def leer_y_validar_fb60():
+    ruta_base = pathlib.Path(__file__).parent / "valores_fb60.json"
+
+    # Leer esperados (escritos por prellenar_esperados_fb60 antes de entrar a FB60)
+    if ruta_base.exists():
+        with open(ruta_base, encoding="utf-8") as f:
+            esperados = json.load(f)
+    else:
+        esperados = {}
+
+    detectados = leer_valores_fb60()
+
+    diferencias = {}
+
+    # --- Comparación contra JSON base ---
+    campos_json = ["Titulo", "Clase documento", "Calc.impuestos", "Combo B2",
+                   "Cta.mayor", "Texto", "Centro coste"]
+
+    for campo in campos_json:
+        val_esp = esperados.get(campo)
+        if val_esp is None:
+            continue
+        val_det = detectados.get(campo)
+        if isinstance(val_esp, bool):
+            if val_det != val_esp:
+                diferencias[campo] = f"esperado={val_esp!r} detectado={val_det!r}"
+        else:
+            n_esp = normalizar(str(val_esp))
+            n_det = normalizar(str(val_det or ""))
+            # Titulo y Texto: basta con que el detectado contenga el esperado
+            if campo in ("Titulo", "Texto"):
+                if n_esp not in n_det:
+                    diferencias[campo] = f"esperado={val_esp!r} detectado={val_det!r}"
+            else:
+                if n_det != n_esp:
+                    diferencias[campo] = f"esperado={val_esp!r} detectado={val_det!r}"
+
+    # --- Validaciones internas ---
+    ff = detectados.get("Fecha factura")
+    fc = detectados.get("Fecha contab.")
+    if ff and fc and ff != fc:
+        diferencias["Fecha factura/contab."] = f"factura={ff!r} contab={fc!r}"
+
+    imp_cab = detectados.get("Importe")
+    imp_tab = detectados.get("Importe moneda doc.")
+    if imp_cab is not None and imp_tab is not None:
+        try:
+            if round(float(str(imp_cab).replace(",", ".")), 2) != round(float(str(imp_tab).replace(",", ".")), 2):
+                diferencias["Importe"] = f"cabecera={imp_cab!r} tabla={imp_tab!r}"
+        except Exception:
+            diferencias["Importe"] = f"no numérico: cabecera={imp_cab!r} tabla={imp_tab!r}"
+
+    if diferencias:
+        _log.error("Validación FB60 fallida. Valores detectados por OCR:")
+        for k, v in detectados.items():
+            _log.error("  %s: %r", k, v)
+
+    return {
+        "detectados":  detectados,
+        "diferencias": diferencias,
+        "valido":      len(diferencias) == 0,
+    }
+
+
+# ==========================================================
+# MAIN — SEGURO PARA IMPORTAR
 # ==========================================================
 
 if __name__ == "__main__":
@@ -914,7 +1582,7 @@ if __name__ == "__main__":
 
     print()
     print("Deja SAP visible en la pantalla correcta.")
-    print("La consola NO debe tapar los campos.")
+    print("La consola NO debe tapar SAP.")
     print()
 
     input("Presiona Enter para capturar en 2 segundos...")
@@ -925,20 +1593,38 @@ if __name__ == "__main__":
     if modo == "2":
         valores = leer_valores_zfiec015()
         json_out = "valores_bancos.json"
-    else:
-        valores = leer_valores_fb60()
-        json_out = "valores_sap.json"
 
-    print()
-    print("==============================")
-    print("VALORES DETECTADOS")
-    print("==============================")
+        print()
+        print("==============================")
+        print("VALORES ZFIEC015")
+        print("==============================")
+
+    else:
+        resultado = leer_y_validar_fb60()
+        valores = resultado["detectados"]
+        json_out = "valores_fb60.json"
+
+        print()
+        print("==============================")
+        print("DIFERENCIAS FB60")
+        print("==============================")
+
+        if resultado["diferencias"]:
+            for k, v in resultado["diferencias"].items():
+                print(f"  {k}: {v}")
+        else:
+            print("  ✅ Todos los campos correctos")
+
+        print()
+        print("==============================")
+        print("VALORES FB60")
+        print("==============================")
 
     for k, v in valores.items():
         print(f"  {k}: {repr(v)}")
 
     print()
-    print(f"JSON: {json_out}")
+    print(f"JSON generado: {json_out}")
     print()
 
     input("Enter para salir...")

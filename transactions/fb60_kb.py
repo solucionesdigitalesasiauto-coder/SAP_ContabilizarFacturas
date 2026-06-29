@@ -10,6 +10,10 @@ import sap_gui as SAP
 _log = logging.getLogger(__name__)
 _kbd = _KbCtrl()
 
+
+class ValidacionFB60Error(RuntimeError):
+    """Validación OCR fallida en FB60 — el doc se cancela y se salta al siguiente."""
+
 # ── Tab-counts calibrados con Au3Info (17-18/06/2026) ────────
 _TAB_FECHA_FACTURA  = 2   # desde Acreedor
 _TAB_FECHA_CONTAB   = 2   # desde Fecha Factura
@@ -27,9 +31,10 @@ _SLEEP_LARGO = 0.9   # tabla / salidas lentas
 _SLEEP_POPUP = 2.0   # espera popup Información tras Contabilizar
 
 # ── Constantes de reintentos y timeouts pywinauto ─────────────
-_MAX_REINTENTOS_CLIP = 5     # reintentos de verificación del portapapeles
-_TIMEOUT_PYWINAUTO   = 5     # timeout pywinauto connect a ventana FB60
-_TIMEOUT_POPUP_UIA   = 1.0   # timeout exists() del popup Información
+_MAX_REINTENTOS_CLIP  = 5    # reintentos de verificación del portapapeles
+_TIMEOUT_PYWINAUTO    = 5    # timeout pywinauto connect a ventana FB60
+_TIMEOUT_POPUP_UIA    = 1.0  # timeout exists() del popup Información
+_TIMEOUT_POPUP_ABANDON = 2.0 # timeout detectar popup de abandono F12
 
 # ── Títulos y strings SAP ─────────────────────────────────────
 _TITULO_FB60      = "Registrar factura"   # título de ventana FB60
@@ -67,6 +72,75 @@ def _pegar(valor: str) -> None:
         _kbd.press('v')
         _kbd.release('v')
     time.sleep(_SLEEP_CORTO)
+
+
+def _confirmar_abandon_fb60(timeout: float = _TIMEOUT_POPUP_ABANDON) -> bool:
+    """Detecta y confirma el popup de abandono de FB60 (F12) via pywinauto.
+
+    Busca el botón 'Sí' dentro de la ventana FB60 y hace click_input().
+    Fallback: Tab + Enter si pywinauto no lo encuentra.
+    """
+    try:
+        from pywinauto import Application
+    except ImportError:
+        _log.debug("pywinauto no disponible — Tab+Enter fallback")
+        _kbd.press(_Key.tab);   _kbd.release(_Key.tab)
+        time.sleep(0.2)
+        _kbd.press(_Key.enter); _kbd.release(_Key.enter)
+        return True
+
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        try:
+            app = Application(backend="uia").connect(
+                title_re=".*Registrar factura.*", timeout=0.5
+            )
+            win = app.window(title_re=".*Registrar factura.*")
+            for ctrl_type in ("Button", "Hyperlink", "ListItem"):
+                try:
+                    btn = win.child_window(title="Sí", control_type=ctrl_type)
+                    if btn.exists(timeout=0.3):
+                        btn.click_input()
+                        _log.info("Clic en 'Sí' (%s) del popup abandono FB60", ctrl_type)
+                        time.sleep(_SLEEP_CORTO)
+                        return True
+                except Exception:
+                    continue
+            # Botón no accesible via UIA — Tab+Enter fallback
+            _log.debug("Botón 'Sí' no encontrado via UIA — Tab+Enter fallback")
+            _kbd.press(_Key.tab);   _kbd.release(_Key.tab)
+            time.sleep(0.2)
+            _kbd.press(_Key.enter); _kbd.release(_Key.enter)
+            return True
+        except Exception:
+            pass
+        time.sleep(_SLEEP_CORTO)
+
+    _log.warning("Popup abandono no detectado en %.1fs — Tab+Enter fallback", timeout)
+    _kbd.press(_Key.tab);   _kbd.release(_Key.tab)
+    time.sleep(0.2)
+    _kbd.press(_Key.enter); _kbd.release(_Key.enter)
+    return False
+
+
+def _validar_pantalla_fb60() -> None:
+    try:
+        from transactions.validacion_Pantalla import leer_y_validar_fb60
+    except (ImportError, SystemExit) as exc:
+        _log.warning("Validación OCR FB60 omitida — %s", exc)
+        return
+    resultado = leer_y_validar_fb60()
+    if not resultado["valido"]:
+        difs = resultado["diferencias"]
+        msg = "Validación FB60 fallida:\n  " + "\n  ".join(f"{k}: {v}" for k, v in difs.items())
+        _log.error(msg)
+        SAP.activar(_TITULO_FB60)
+        SAP.f12()
+        time.sleep(_SLEEP_LARGO)
+        _confirmar_abandon_fb60()
+        raise ValidacionFB60Error(msg)
+    _log.info("Validación OCR FB60 OK.")
+    print("  ✓ Validación FB60 OK")
 
 
 def registrar_factura(banco: dict) -> dict:
@@ -130,6 +204,8 @@ def registrar_factura(banco: dict) -> dict:
     _salir_tabla_y_limpiar_advertencia()
     t = _t("salir_tabla ✓", t)
     time.sleep(_SLEEP_CORTO)
+    _validar_pantalla_fb60()
+    t = _t("validacion_ocr ✓", t)
     _llenar_pestana_pago(via_pago)
     t = _t(f"pestana_pago ← {via_pago!r}", t)
     time.sleep(_SLEEP_CORTO)

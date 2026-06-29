@@ -90,17 +90,12 @@ def _get_session():
 
 def _validar_campos_zfiec(proveedor, fecha_desde, fecha_hasta, sociedad, tipo_doc):
     import json, pathlib
-    esperados = {
-        "Sociedad":                 sociedad,
-        "Proveedor":                proveedor,
-        "FechaInicio":              fecha_desde,
-        "FechaFin":                 fecha_hasta,
-        "Código Tipo de Documento": tipo_doc,
-        "Tipo de Procesamiento":    os.getenv("TIPO_PROCESAMIENTO", "Pendiente"),
-    }
     ruta = pathlib.Path(__file__).parent / "valores_bancos.json"
-    with open(ruta, "w", encoding="utf-8") as f:
-        json.dump(esperados, f, ensure_ascii=False, indent=4)
+    if not ruta.exists():
+        _log.warning("Validación ZFIEC015 omitida — valores_bancos.json no existe")
+        return
+    with open(ruta, encoding="utf-8") as f:
+        esperados = json.load(f)
     _log.info("Validando campos ZFIEC015 por OCR...")
     try:
         from transactions.validacion_Pantalla import leer_valores_zfiec015
@@ -328,7 +323,7 @@ def procesar_documentos(banco: dict, max_docs: int = None, **_):
     Returns:
         tuple[list, list]: (procesados, errores)
     """
-    from transactions.fb60_kb import registrar_factura
+    from transactions.fb60_kb import registrar_factura, ValidacionFB60Error
     procesados = []
     errores    = []
 
@@ -355,6 +350,14 @@ def procesar_documentos(banco: dict, max_docs: int = None, **_):
             procesados.append(resultado)
             print(f"    ✓ Doc {n}: {resultado['sap_doc']}")
             _log.info("Procesado doc_%d → %s", n, resultado['sap_doc'])
+        except ValidacionFB60Error as e:
+            _log.warning("Validación FB60 fallida doc_%d — saltando al siguiente: %s", n, e)
+            print(f"    ↺ doc_{n}: validación OCR fallida — siguiente documento")
+            errores.append({"doc": f"doc_{n}", "error": str(e)})
+            time.sleep(_SLEEP_CARGA)   # esperar que SAP regrese a grilla ZFIEC015
+            if not _abrir_fb60_teclado(0):
+                break
+            continue
         except Exception as e:
             _log.error("Error doc_%d: %s", n, e, exc_info=True)
             print(f"    ✗ doc_{n}: {e}")

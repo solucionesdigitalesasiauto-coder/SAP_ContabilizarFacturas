@@ -657,11 +657,41 @@ def procesar_banco(banco: dict, fecha_desde: str, fecha_hasta: str, max_docs: in
         - "cuenta_mayor_sap": clave del proveedor SAP en el dict banco (STRING)
     """
     from transactions.zfiec015_kb import buscar, procesar_documentos
+    import json as _json, pathlib as _pathlib
 
     print(f"\n{'─'*55}")
     print(f"  Banco: {banco['nombre']}  |  Proveedor: {banco['cuenta_mayor_sap']}")
     print(f"  Período: {fecha_desde} al {fecha_hasta}")
     print(f"{'─'*55}")
+
+    # Actualizar valores_bancos.json con datos del banco/período actual.
+    # Tipo de Procesamiento se preserva del JSON existente — nunca se modifica.
+    _ruta_bancos = _pathlib.Path(__file__).parent / "transactions" / "valores_bancos.json"
+    try:
+        _base = _json.loads(_ruta_bancos.read_text(encoding="utf-8")) if _ruta_bancos.exists() else {}
+    except Exception:
+        _base = {}
+    _base.update({
+        "Sociedad":                 os.getenv("SAP_SOCIEDAD", "2000"),
+        "Proveedor":                banco["cuenta_mayor_sap"],
+        "FechaInicio":              fecha_desde,
+        "FechaFin":                 fecha_hasta,
+        "Código Tipo de Documento": os.getenv("TIPO_DOC_ZFIEC", "01"),
+    })
+    _ruta_bancos.write_text(_json.dumps(_base, ensure_ascii=False, indent=4), encoding="utf-8")
+
+    # Actualizar valores_fb60.json con campos contables del banco/período actual.
+    # El resto de campos (Titulo, Clase doc, etc.) se preservan del JSON existente.
+    _ruta_fb60 = _pathlib.Path(__file__).parent / "transactions" / "valores_fb60.json"
+    try:
+        _base_fb60 = _json.loads(_ruta_fb60.read_text(encoding="utf-8")) if _ruta_fb60.exists() else {}
+    except Exception:
+        _base_fb60 = {}
+    _base_fb60.update({
+        "Cta.mayor":    os.getenv("CUENTA_MAYOR", ""),
+        "Centro coste": os.getenv("CENTRO_COSTO", ""),
+    })
+    _ruta_fb60.write_text(_json.dumps(_base_fb60, ensure_ascii=False, indent=4), encoding="utf-8")
 
     count = None
     for _intento in range(_MAX_INTENTOS_BANCO):
