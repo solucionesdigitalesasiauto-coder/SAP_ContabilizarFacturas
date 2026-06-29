@@ -136,61 +136,59 @@ def _hwnd_con_titulo(texto: str):
     return result[0] if result else None
 
 
-_POPUP_RATIO_OPCION2  = 0.46   # Y: opción 2 "sin finalizar" (~46% altura diálogo)
-_POPUP_RATIO_BTN_X   = 0.91   # X: botón ✓ confirmar (~91% ancho diálogo)
-_POPUP_RATIO_BTN_Y   = 0.97   # Y: botón ✓ confirmar (~97% altura diálogo)
-
-
-def _clic_fisico(x: int, y: int) -> None:
-    """Clic izquierdo en coordenadas físicas (DPI-safe) vía win32api.
-    SetCursorPos posiciona el cursor; mouse_event con 0,0 hace clic ahí.
-    """
-    win32api.SetCursorPos((x, y))
-    time.sleep(_SLEEP_CORTO)
-    win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-    win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP,   0, 0, 0, 0)
-
 
 def _manejar_popup_sesion_multiple():
     """Detecta y gestiona el popup de sesión múltiple de SAP.
 
     Selecciona "Continuar sin finalizar entradas existentes" (opción 2).
     Detecta posición del foco para elegir el flujo de navegación:
-      - Flujo 1: foco en texto superior ("El usuario...") → Ctrl+Shift+Down ×6
-      - Flujo 2: foco en historial/tabla inferior          → Up×3
+      - Flujo 1: foco en texto superior "El usuario..." → Ctrl+Shift+Down ×6 + Enter
+      - Flujo 2: foco en opción 3 "Cancelar" (default)  → Up×1               + Enter
     """
+    from pynput.keyboard import Controller as _KbdCtrl, Key as _K
     hwnd = _hwnd_con_titulo(_TITULO_POPUP_LICENCIA)
     if not hwnd:
         return
     print("  Popup sesión múltiple — continuando sin cerrar otras sesiones...")
 
     win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+    tid_yo = win32api.GetCurrentThreadId()
+    tid_el = win32process.GetWindowThreadProcessId(hwnd)[0]
+    ctypes.windll.user32.AttachThreadInput(tid_yo, tid_el, True)
     win32gui.SetForegroundWindow(hwnd)
+    ctypes.windll.user32.SetFocus(hwnd)
     time.sleep(_SLEEP_SAP)
+    ctypes.windll.user32.AttachThreadInput(tid_yo, tid_el, False)
 
-    # Detectar posición del foco
-    nombre_foco = ""
+    # Detectar posición del foco por tipo de control (no por nombre — textos SAP lo dejan vacío)
+    tipo_control = ""
+    nombre_foco  = ""
     try:
         from pywinauto import Desktop
         foco = Desktop(backend="uia").get_focus()
-        nombre_foco = (foco.element_info.name or "").lower()
-        _log.debug("Popup licencia — foco en: %r", nombre_foco)
+        tipo_control = (foco.element_info.control_type or "").lower()
+        nombre_foco  = (foco.element_info.name        or "").lower()
+        _log.debug("Popup licencia — tipo=%r nombre=%r", tipo_control, nombre_foco)
     except Exception as _e:
         _log.debug("No se pudo leer foco: %s", _e)
 
-    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
-    ancho = right - left
-    alto  = bottom - top
+    _kbd = _KbdCtrl()
+    # Flujo 2: foco en radio button (opción 3 Cancelar) → Up×1 llega a opción 2
+    # Flujo 1: foco en texto/label (nombre vacío) → Ctrl+Shift+Down×6 baja hasta opción 2
+    if tipo_control == "radiobutton":
+        print(f"  Flujo 2 — Up×1 (tipo={tipo_control!r} foco={nombre_foco!r})")
+        _kbd.press(_K.up); _kbd.release(_K.up)
+    else:
+        print(f"  Flujo 1 — Ctrl+Shift+Down×6 + Space (tipo={tipo_control!r} foco={nombre_foco!r})")
+        for _ in range(6):
+            with _kbd.pressed(_K.ctrl, _K.shift):
+                _kbd.press(_K.down); _kbd.release(_K.down)
+            time.sleep(_SLEEP_MICRO)
+        time.sleep(_SLEEP_CORTO)
+        _kbd.press(_K.space); _kbd.release(_K.space)  # activa el radio button
 
-    # Clic en opción 2 "Continuar sin finalizar entradas existentes"
-    print(f"  Clic opción 2 ({int(ancho*0.50)}x, {int(alto*_POPUP_RATIO_OPCION2)}y)")
-    _clic_fisico(left + int(ancho * 0.50), top + int(alto * _POPUP_RATIO_OPCION2))
     time.sleep(_SLEEP_LARGO)
-
-    # Clic en botón ✓ confirmar
-    print(f"  Clic ✓ ({int(ancho*_POPUP_RATIO_BTN_X)}x, {int(alto*_POPUP_RATIO_BTN_Y)}y)")
-    _clic_fisico(left + int(ancho * _POPUP_RATIO_BTN_X),
-                 top  + int(alto  * _POPUP_RATIO_BTN_Y))
+    _kbd.press(_K.enter); _kbd.release(_K.enter)
     time.sleep(_SLEEP_SAP)
 
 
@@ -665,7 +663,20 @@ def procesar_banco(banco: dict, fecha_desde: str, fecha_hasta: str, max_docs: in
     print(f"  Período: {fecha_desde} al {fecha_hasta}")
     print(f"{'─'*55}")
 
-    count = buscar(banco["cuenta_mayor_sap"], fecha_desde, fecha_hasta)
+    count = None
+    for _intento in range(_MAX_INTENTOS_BANCO):
+        try:
+            count = buscar(banco["cuenta_mayor_sap"], fecha_desde, fecha_hasta)
+            break
+        except RuntimeError as _e:
+            if _intento < _MAX_INTENTOS_BANCO - 1:
+                print(f"  ↺ Validación fallida — reintento {_intento + 1}/{_MAX_INTENTOS_BANCO - 1}...")
+                _log.warning("buscar intento %d fallido: %s", _intento + 1, _e)
+                time.sleep(_SLEEP_REINTENTO_BANCO)
+            else:
+                _log.error("buscar fallido tras %d intentos: %s", _MAX_INTENTOS_BANCO, _e, exc_info=True)
+                raise
+
     if count == 0:
         print("  Sin documentos pendientes.")
         return [], []

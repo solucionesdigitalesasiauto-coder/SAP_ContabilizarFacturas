@@ -88,6 +88,39 @@ def _get_session():
 
 # ── PASO 1: Llenar formulario ZFIEC015 ───────────────────────
 
+def _validar_campos_zfiec(proveedor, fecha_desde, fecha_hasta, sociedad, tipo_doc):
+    import json, pathlib
+    esperados = {
+        "Sociedad":                 sociedad,
+        "Proveedor":                proveedor,
+        "FechaInicio":              fecha_desde,
+        "FechaFin":                 fecha_hasta,
+        "Código Tipo de Documento": tipo_doc,
+        "Tipo de Procesamiento":    os.getenv("TIPO_PROCESAMIENTO", "Pendiente"),
+    }
+    ruta = pathlib.Path(__file__).parent / "valores_bancos.json"
+    with open(ruta, "w", encoding="utf-8") as f:
+        json.dump(esperados, f, ensure_ascii=False, indent=4)
+    _log.info("Validando campos ZFIEC015 por OCR...")
+    try:
+        from transactions.validacion_Pantalla import leer_valores_zfiec015
+    except (ImportError, SystemExit) as exc:
+        _log.warning("Validación ZFIEC015 omitida — %s", exc)
+        return
+    detectados = leer_valores_zfiec015()
+    diferencias = [
+        f"{campo}: esperado={val_esp!r} detectado={detectados.get(campo)!r}"
+        for campo, val_esp in esperados.items()
+        if detectados.get(campo) != val_esp
+    ]
+    if diferencias:
+        msg = "Validación ZFIEC015 fallida:\n  " + "\n  ".join(diferencias)
+        _log.error(msg)
+        raise RuntimeError(msg)
+    _log.info("Validación ZFIEC015 OK.")
+    print("  ✓ Validación ZFIEC015 OK")
+
+
 def buscar(proveedor: str, fecha_desde: str, fecha_hasta: str,
            sociedad: str = None, tipo_doc: str = None) -> int:
     """Navega a ZFIEC015, llena el formulario y ejecuta la búsqueda (F8).
@@ -121,12 +154,26 @@ def buscar(proveedor: str, fecha_desde: str, fecha_hasta: str,
     SAP.esperar_titulo(_TITULO_ZFIEC, timeout=_TIMEOUT_ZFIEC)
     SAP.verificar_pantalla(_TITULO_ZFIEC, "ZFIEC015-Formulario")
     time.sleep(_SLEEP_MEDIO)
-
+    
+    
     session = _get_session()
     if session and _CAMPOS_DISPONIBLES:
         _llenar_form_scripting(session, sociedad, proveedor, fecha_desde, fecha_hasta, tipo_doc)
     else:
         _llenar_form_teclado(sociedad, proveedor, fecha_desde, fecha_hasta, tipo_doc)
+
+    SAP.activar()
+    SAP.tab(1)
+    time.sleep(_SLEEP_MEDIO)
+    _validar_campos_zfiec(proveedor, fecha_desde, fecha_hasta, sociedad, tipo_doc)
+
+    if session and _CAMPOS_DISPONIBLES:
+        session.findById("wnd[0]").sendVKey(8)
+        _log.debug("ZFIEC015 F8 enviado via scripting.")
+    else:
+        SAP.activar(_TITULO_ZFIEC_ES)
+        SAP.f8()
+        _log.debug("ZFIEC015 F8 enviado via teclado.")
     time.sleep(_SLEEP_CARGA)
 
     titulo = SAP.titulo_actual()
@@ -182,8 +229,7 @@ def _llenar_form_scripting(session, sociedad, proveedor,
         except Exception:
             continue
 
-    session.findById("wnd[0]").sendVKey(8)   # F8 = Ejecutar
-    _log.debug("ZFIEC015 formulario enviado via scripting.")
+    _log.debug("ZFIEC015 campos llenados via scripting.")
 
 
 def _set_field(session, *ids, value: str) -> bool:
@@ -261,9 +307,7 @@ def _llenar_form_teclado(sociedad, proveedor, fecha_desde, fecha_hasta, tipo_doc
     SAP.escribir(tipo_doc)
     time.sleep(_SLEEP_CORTO)
 
-    SAP.activar(_TITULO_ZFIEC_ES)
-    SAP.f8()
-    _log.debug("ZFIEC015 formulario enviado via teclado.")
+    _log.debug("ZFIEC015 campos llenados via teclado.")
 
 
 # ── PASO 2: Procesar filas de la grilla ──────────────────────
