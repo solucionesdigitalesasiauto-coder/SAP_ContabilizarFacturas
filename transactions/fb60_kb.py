@@ -2,9 +2,7 @@
 import os
 import time
 import logging
-import datetime
 import pyperclip
-import pyautogui
 from pynput.keyboard import Controller as _KbCtrl, Key as _Key
 
 import sap_gui as SAP
@@ -24,48 +22,21 @@ _TAB_POS_CCOSTO     = 5
 # ── Timings (ajustar si SAP responde más lento) ───────────────
 _SLEEP_MICRO = 0.1   # micro-pausa interna (retry clipboard, pre-paste)
 _SLEEP_CORTO = 0.3   # entre campos / teclas
-_SLEEP_MEDIO = 0.5   # entre pasos SAP
-_SLEEP_LARGO = 0.8   # tabla / salidas lentas
+_SLEEP_MEDIO = 0.6   # entre pasos SAP
+_SLEEP_LARGO = 0.9   # tabla / salidas lentas
 _SLEEP_POPUP = 2.0   # espera popup Información tras Contabilizar
+
+# ── Constantes de reintentos y timeouts pywinauto ─────────────
+_MAX_REINTENTOS_CLIP = 5     # reintentos de verificación del portapapeles
+_TIMEOUT_PYWINAUTO   = 5     # timeout pywinauto connect a ventana FB60
+_TIMEOUT_POPUP_UIA   = 1.0   # timeout exists() del popup Información
 
 # ── Títulos y strings SAP ─────────────────────────────────────
 _TITULO_FB60      = "Registrar factura"   # título de ventana FB60
 _TITULO_FB60_ALT  = "ingresar factura"    # título alternativo FB60
 _TITULO_POPUP_ABA = "tratamiento"         # popup de abandono al F12
 _IMPORTE_AUTO     = "*"                   # SAP calcula el total automáticamente
-_TIMEOUT_FB60     = 8                     # segundos esperando apertura de FB60
-_DIR_SCREENSHOTS  = "screenshots"         # carpeta de capturas pre-contabilización
-
-
-_SENTINEL = "\x7F_SAP_CHECK_\x7F"   # marcador para detectar si Ctrl+C respondió
-
-
-def _verificar_inline(nombre: str, esperado: str, en_tabla: bool = False) -> None:
-    """Lee el campo activo con Ctrl+C y lanza ValueError si no coincide.
-
-    Si Ctrl+C no responde (SAP no actualizó el portapapeles), solo advierte —
-    no aborta — para evitar falsos positivos en contextos donde SAP ignora Ctrl+C.
-    Si está en_tabla=True y hay mismatch, llama a salir_tabla() antes de relanzar.
-    """
-    pyperclip.copy(_SENTINEL)
-    time.sleep(_SLEEP_MICRO)
-    with _kbd.pressed(_Key.ctrl):
-        _kbd.press('c'); _kbd.release('c')
-    time.sleep(_SLEEP_CORTO)
-    obtenido = pyperclip.paste().strip()
-
-    if _SENTINEL in obtenido:
-        _log.warning("  verificar %-20s → Ctrl+C sin respuesta (se continúa)", nombre)
-        return
-
-    if obtenido != esperado:
-        _log.error("  MISMATCH %-20s esperado=%r  obtenido=%r", nombre, esperado, obtenido)
-        if en_tabla:
-            try: SAP.salir_tabla()
-            except Exception: pass
-        raise ValueError(f"Campo {nombre!r}: esperado {esperado!r}  SAP tiene {obtenido!r}")
-
-    _log.info("  verificar %-20s OK (%r)", nombre, obtenido)
+_TIMEOUT_FB60     = 2                     # segundos esperando apertura de FB60
 
 
 def _pegar(valor: str) -> None:
@@ -81,14 +52,13 @@ def _pegar(valor: str) -> None:
         None
 
     Hardcoded:
-        - 5: reintentos máximos de verificación del portapapeles (NÚMERO MÁGICO)
-        - 0.05: sleep entre reintentos de portapapeles (TIMING)
-        - 0.1: sleep antes de Ctrl+V (TIMING)
-        - 0.25: sleep tras Ctrl+V (TIMING)
+        - _MAX_REINTENTOS_CLIP: reintentos de verificación del portapapeles
+        - _SLEEP_MICRO: pausa entre reintentos y antes de Ctrl+V
+        - _SLEEP_CORTO: pausa tras Ctrl+V
     """
     texto = str(valor)
     pyperclip.copy(texto)
-    for _ in range(5):
+    for _ in range(_MAX_REINTENTOS_CLIP):
         if pyperclip.paste() == texto:
             break
         time.sleep(_SLEEP_MICRO)
@@ -119,12 +89,6 @@ def registrar_factura(banco: dict) -> dict:
             - fecha (str): Fecha de factura capturada del formulario.
             - cuenta_mayor (str): Cuenta mayor usada.
             - centro_costo (str): Centro de costo usado.
-
-    Hardcoded:
-        - _TITULO_FB60 = "Registrar factura"  (STRING — título esperado de pantalla)
-        - _TIMEOUT_FB60 = 8                   (TIMING — segundos timeout esperar FB60)
-        - VIA_PAGO: leído de os.getenv("VIA_PAGO")
-        - INDICADOR_IMPUESTO: leído de os.getenv("INDICADOR_IMPUESTO")
     """
     cuenta_mayor = banco.get("cuenta_mayor", "")
     centro_costo = banco.get("centro_costo", "")
@@ -161,7 +125,7 @@ def registrar_factura(banco: dict) -> dict:
     t = _t(f"indicador_impuesto ← {ind_impuesto!r}", t)
     time.sleep(_SLEEP_CORTO)
     _posicion_normal(cuenta_mayor, texto_com, centro_costo)
-    t = _t(f"posicion_normal ← cta={cuenta_mayor!r} importe={_IMPORTE_AUTO!r} txt={texto_com!r} cc={centro_costo!r}", t)
+    t = _t(f"posicion_normal ← cta={cuenta_mayor!r} cc={centro_costo!r}", t)
     time.sleep(_SLEEP_CORTO)
     _salir_tabla_y_limpiar_advertencia()
     t = _t("salir_tabla ✓", t)
@@ -173,9 +137,9 @@ def registrar_factura(banco: dict) -> dict:
     t = _t(f"pestana_detalle ← {texto_cab!r}", t)
     time.sleep(_SLEEP_CORTO)
 
-    ruta_img = _screenshot_datos_basicos(banco.get("nombre", "banco"))
-    t = _t(f"screenshot ← {os.path.basename(ruta_img)}", t)
-    time.sleep(_SLEEP_CORTO)
+    # Volver a Datos básicos para que doc 2+ abra con cursor en Acreedor
+    SAP.pestana_anterior()
+    SAP.pestana_anterior()
 
     nro = _contabilizar_o_cancelar(fecha_capturada)
     _t(f"contabilizar → {nro!r}", t)
@@ -297,6 +261,8 @@ def _llenar_resto_tabla(texto_com: str, centro_costo: str) -> None:
 
     Continúa desde Cta.mayor con tabulación: Importe (_TAB_POS_IMPORTE tabs),
     Texto (_TAB_POS_TEXTO tabs), Centro Costo (_TAB_POS_CCOSTO tabs).
+    Cada campo espera _SLEEP_MEDIO tras el tab antes de activar()/escribir()
+    para que el foco se asiente en máquinas rápidas (Ctrl+V llega a campo activo).
 
     Args:
         texto_com (str): Texto de la posición (ej. "comision banco del austro").
@@ -309,14 +275,19 @@ def _llenar_resto_tabla(texto_com: str, centro_costo: str) -> None:
         - _IMPORTE_AUTO = "*"  (STRING — indica a SAP que calcule el total)
     """
     SAP.tab(_TAB_POS_IMPORTE)
+    time.sleep(_SLEEP_MEDIO)
+    SAP.activar()
     _pegar(_IMPORTE_AUTO)
     time.sleep(_SLEEP_MEDIO)
 
     SAP.tab(_TAB_POS_TEXTO)
+    time.sleep(_SLEEP_MEDIO)
+    SAP.activar()
     _pegar(texto_com)
     time.sleep(_SLEEP_MEDIO)
 
     SAP.tab(_TAB_POS_CCOSTO)
+    time.sleep(_SLEEP_MEDIO)
     SAP.escribir(centro_costo)
     time.sleep(_SLEEP_LARGO)
 
@@ -366,10 +337,11 @@ def _llenar_pestana_pago(via_pago: str) -> None:
 
 
 def _llenar_pestana_detalle(texto_cab: str) -> None:
-    """Navega a la pestaña Detalle y escribe el texto de cabecera.
+    """Navega a la pestaña Detalle, escribe el texto de cabecera y regresa a Datos básicos.
 
-    Usa Ctrl+Shift+AvPág para cambiar de pestaña, luego Tab(1) para
-    posicionarse en el campo Txt.cabec y pega el texto.
+    Usa Ctrl+Shift+AvPág para cambiar de pestaña, Tab(1) para posicionarse
+    en Txt.cabec, pega el texto y luego retrocede 2× pestana_anterior() hasta
+    Datos básicos. Así SAP recuerda esa pestaña y doc 2+ abre con cursor en Acreedor.
 
     Args:
         texto_cab (str): Texto de cabecera del documento (ej. "BANCO DEL AUSTRO").
@@ -387,28 +359,6 @@ def _llenar_pestana_detalle(texto_cab: str) -> None:
     SAP.enter()
     SAP.activar()
     time.sleep(_SLEEP_CORTO)
-
-
-def _screenshot_datos_basicos(banco_nombre: str) -> str:
-    """Retrocede a Datos básicos, toma screenshot y retorna la ruta del archivo.
-
-    Navega 2 pestañas atrás (Detalle→Pago→Datos básicos) para capturar
-    Acreedor, fechas y moneda antes de contabilizar. El botón Contabilizar
-    está en el footer y funciona desde cualquier pestaña, así que NO es
-    necesario volver a Detalle antes de llamar a _contabilizar_o_cancelar.
-    """
-    SAP.activar()
-    for _ in range(2):
-        SAP.pestana_anterior()
-    time.sleep(_SLEEP_MEDIO)
-
-    os.makedirs(_DIR_SCREENSHOTS, exist_ok=True)
-    ts  = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    ruta = os.path.join(_DIR_SCREENSHOTS, f"{banco_nombre}_{ts}.png")
-    pyautogui.screenshot(ruta)
-    _log.info("Screenshot pre-contabilizacion: %s", ruta)
-    return ruta
-
 
 def _contabilizar_o_cancelar(fecha_capturada: str) -> str:
     """Despacha a modo real o prueba según variable de entorno CONTABILIZAR.
@@ -448,7 +398,7 @@ def _contabilizar(fecha_capturada: str) -> str:
     try:
         from pywinauto import Application
         _app = Application(backend="uia").connect(
-            title_re=".*Registrar factura de acreedor.*", timeout=5
+            title_re=".*Registrar factura de acreedor.*", timeout=_TIMEOUT_PYWINAUTO
         )
         _win    = _app.window(title_re=".*Registrar factura de acreedor.*")
         _footer = _win.child_window(title="Footer", control_type="Pane")
@@ -466,7 +416,7 @@ def _contabilizar(fecha_capturada: str) -> str:
     _cerrado = False
     try:
         popup = _win.child_window(title_re=".*Informaci.*")
-        if popup.exists(timeout=1.0):
+        if popup.exists(timeout=_TIMEOUT_POPUP_UIA):
             _log.info("Popup Información encontrado en UIA — cerrando")
             popup.type_keys("{ENTER}")
             _cerrado = True

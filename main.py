@@ -92,11 +92,11 @@ _TCODE_SAPLOGON_TEXT   = "SAP Logon"  # texto en título de SAP Logon
 _TCODES_MENU           = ("SESSION_MANAGER", "S000", "")  # tcodes del menú principal
 
 # ── Timing (ajustar si el sistema es más lento) ──────────────
-_SLEEP_MICRO  = 0.15  # micro-pausa (caps lock, pre-state check)
+_SLEEP_MICRO  = 0.1   # micro-pausa (caps lock, pre-state check)
 _SLEEP_CORTO  = 0.2   # entre pasos rápidos / pyautogui
 _SLEEP_MEDIO  = 0.3   # entre pasos SAP (click, type-ahead)
 _SLEEP_LARGO  = 0.5   # tras activar ventana / escape popup
-_SLEEP_POLL   = 1     # intervalo de sondeo en loops
+_SLEEP_POLL   = 1.0   # intervalo de sondeo en loops
 _SLEEP_SAP    = 1.5   # tras popup SAP / sesión múltiple
 _SLEEP_INICIO = 2.0   # espera SAP arranque / cierre sesión
 _MAX_INTENTOS_BANCO  = 3    # total intentos por banco (1 original + 2 reintentos)

@@ -13,13 +13,14 @@ from pynput.keyboard import Key, Controller as _KbController
 
 # ── Configuración global ──────────────────────────────────────
 SAP_CLASE    = "SAP_FRONTEND_SESSION"   # clase de ventana SAP GUI en Win32
-_PAUSE_PYAG   = 0.08   # pyautogui.PAUSE global (entre acciones pyautogui)
-_SLEEP_CORTO  = 0.1    # entre teclas / clics / tabs
-_SLEEP_MEDIO  = 0.3    # entre pasos SAP / clipboard / ventana
-_SLEEP_LARGO  = 0.5    # tras activar ventana / espera popup
-_SLEEP_PESTANA = 0.8   # tras cambio de pestaña FB60
-_SLEEP_TCODE  = 1.5    # tras navegar a transacción / cerrar scripting
-_SLEEP_NEND   = 2.0    # tras /nend antes de popup salida
+_PAUSE_PYAG    = 0.08   # pyautogui.PAUSE global (entre acciones pyautogui)
+_SLEEP_CORTO   = 0.1    # entre teclas / clics / tabs
+_SLEEP_MEDIO   = 0.3    # entre pasos SAP / clipboard / ventana
+_SLEEP_LARGO   = 0.5    # tras activar ventana / espera popup
+_SLEEP_PESTANA = 0.8    # tras cambio de pestaña FB60
+_SLEEP_TCODE   = 1.5    # tras navegar a transacción / cerrar scripting
+_SLEEP_NEND    = 2.0    # tras /nend antes de popup salida
+_INTERVAL_WRITE = 0.05  # pausa entre caracteres en pyautogui.write / pegar_fecha
 
 pyautogui.FAILSAFE = True
 pyautogui.PAUSE = _PAUSE_PYAG
@@ -328,7 +329,7 @@ def info_ventana():
 # Teclado
 # ─────────────────────────────────────────────────────────────
 
-def escribir(texto, delay=0.05):
+def escribir(texto, delay=_INTERVAL_WRITE):
     """Escribe texto carácter a carácter via pyautogui.write.
 
     Args:
@@ -476,7 +477,7 @@ def pegar_fecha():
         with _kb.pressed(Key.ctrl):
             _kb.press('a'); _kb.release('a')
         time.sleep(_SLEEP_CORTO)
-        pyautogui.write(texto, interval=0.05)
+        pyautogui.write(texto, interval=_INTERVAL_WRITE)
 
 
 def enter():

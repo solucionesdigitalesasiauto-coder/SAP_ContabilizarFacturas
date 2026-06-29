@@ -26,13 +26,20 @@ _SLEEP_CARGA      = 2.5   # espera carga de resultados F8
 _SLEEP_REINTENTAR = 2.0   # reintento de apertura FB60
 _SLEEP_ENTRE_DOCS = 1.0   # pausa entre documentos consecutivos
 
+# ── Timeouts pywinauto (ajustar si el sistema es más lento) ───
+_TIMEOUT_POPUP_CONFIRM  = 2.0   # segundos esperando popup HTML de confirmación grilla
+_TIMEOUT_CONNECT        = 0.5   # timeout pywinauto connect (sondeo rápido en loop)
+_TIMEOUT_CONNECT_BARRA  = 1.0   # timeout pywinauto connect en _leer_barra_zfiec
+_TIMEOUT_PANE_EXISTS    = 0.1   # timeout exists() del pane popup FB60
+_TIMEOUT_BTN_EXISTS     = 0.3   # timeout exists() del botón Sí
+
 # ── Títulos y strings SAP ─────────────────────────────────────
 _TITULO_ZFIEC         = "Recepcion de documentos Electronicos"   # sin tilde (esperar_titulo)
 _TITULO_ZFIEC_ES      = "Recepción de documentos Electrónicos"   # con tilde (activar)
 _TITULO_FB60          = "Registrar factura"
 _GRID_SAP_ID          = "wnd[0]/usr/cntlGRID1/shellcont/shell"
 _COL_FB60             = "FB60"                                   # columna de botón en grilla
-_TIMEOUT_ZFIEC        = 30   # segundos esperando pantalla ZFIEC015
+_TIMEOUT_ZFIEC        = 15   # segundos esperando pantalla ZFIEC015
 _TIMEOUT_FB60         = 5    # segundos esperando apertura de FB60
 _MAX_INTENTOS_POPUP   = 3    # reintentos Enter para popup HTML de ZFIEC015
 
@@ -103,7 +110,7 @@ def buscar(proveedor: str, fecha_desde: str, fecha_hasta: str,
 
     Hardcoded:
         - _TITULO_ZFIEC = "Recepcion de documentos Electronicos"  (STRING)
-        - _TIMEOUT_ZFIEC = 20                                     (TIMING — segundos)
+        - _TIMEOUT_ZFIEC = 15                                     (TIMING — segundos)
         - _GRID_SAP_ID: ruta del control Grid en SAP              (STRING SAP)
         - "recepci", "electr": fragmentos para detectar título    (STRING)
     """
@@ -255,7 +262,6 @@ def _llenar_form_teclado(sociedad, proveedor, fecha_desde, fecha_hasta, tipo_doc
     time.sleep(_SLEEP_CORTO)
 
     SAP.activar(_TITULO_ZFIEC_ES)
-    #time.sleep(_SLEEP_CORTO)
     SAP.f8()
     _log.debug("ZFIEC015 formulario enviado via teclado.")
 
@@ -389,7 +395,7 @@ def _leer_barra_zfiec() -> str:
     try:
         from pywinauto import Application
         app    = Application(backend="uia").connect(
-            title_re=".*Recepci.*documentos.*", timeout=1
+            title_re=".*Recepci.*documentos.*", timeout=_TIMEOUT_CONNECT_BARRA
         )
         win    = app.window(title_re=".*Recepci.*documentos.*")
         footer = win.child_window(title="Footer", control_type="Pane")
@@ -400,7 +406,7 @@ def _leer_barra_zfiec() -> str:
         return ""
 
 
-def _esperar_y_confirmar_popup(timeout: float = 8) -> bool:
+def _esperar_y_confirmar_popup(timeout: float = _TIMEOUT_POPUP_CONFIRM) -> bool:
     """Espera el popup '¿Está seguro de ingresar la Factura?' y confirma con Sí.
 
     Estrategia:
@@ -426,11 +432,11 @@ def _esperar_y_confirmar_popup(timeout: float = 8) -> bool:
     while time.time() - t0 < timeout:
         try:
             app  = Application(backend="uia").connect(
-                title_re=".*Recepci.*documentos.*", timeout=0.5
+                title_re=".*Recepci.*documentos.*", timeout=_TIMEOUT_CONNECT
             )
             win  = app.window(title_re=".*Recepci.*documentos.*")
             pane = win.child_window(title="FB60", control_type="Pane")
-            if not pane.exists(timeout=0.1):
+            if not pane.exists(timeout=_TIMEOUT_PANE_EXISTS):
                 time.sleep(_SLEEP_CORTO)
                 continue
 
@@ -444,7 +450,7 @@ def _esperar_y_confirmar_popup(timeout: float = 8) -> bool:
             for ctrl_type in ("Button", "Hyperlink", "ListItem"):
                 try:
                     btn = pane.child_window(title="Sí", control_type=ctrl_type)
-                    if btn.exists(timeout=0.3):
+                    if btn.exists(timeout=_TIMEOUT_BTN_EXISTS):
                         btn.click_input()
                         _log.info("Clic en 'Sí' (%s) del popup (%.1fs)",
                                   ctrl_type, time.time() - t0)
@@ -453,13 +459,8 @@ def _esperar_y_confirmar_popup(timeout: float = 8) -> bool:
                 except Exception:
                     continue
 
-            # Botones no accesibles via UIA (HTML puro)
-            # El popup ya está al frente — Tab×2 → Enter sin set_focus()
-            _kbd.press(_Key.tab); _kbd.release(_Key.tab)
-            time.sleep(_SLEEP_CORTO)
-            _kbd.press(_Key.tab); _kbd.release(_Key.tab)
-            time.sleep(_SLEEP_CORTO)
-            _log.info("Tab×2 → Enter en popup FB60 (Sí)")
+            # Botón no accesible via UIA (HTML puro) — Enter funciona igual
+            _log.debug("Botón 'Sí' no accesible via UIA — Enter fallback")
             _kbd.press(_Key.enter); _kbd.release(_Key.enter)
             return True
 
@@ -485,7 +486,7 @@ def _abrir_fb60_teclado(fila_idx: int, mismo_foco: bool = False) -> bool:
         bool: True si aparece pantalla "Registrar factura" en _TIMEOUT_FB60 segundos.
     """
     SAP.activar(_TITULO_ZFIEC)
-    time.sleep(_SLEEP_CORTO * 2)
+    time.sleep(_SLEEP_MEDIO)
     if fila_idx > 0 and not mismo_foco:
         # Grid activo, modo prueba: avanzar fila con Down
         _kbd.press(_Key.down); _kbd.release(_Key.down)
@@ -500,7 +501,13 @@ def _abrir_fb60_teclado(fila_idx: int, mismo_foco: bool = False) -> bool:
     _kbd.press(_Key.right); _kbd.release(_Key.right)
     time.sleep(_SLEEP_LARGO)
     _kbd.press(_Key.enter); _kbd.release(_Key.enter)   # abre popup de confirmación HTML
-    _esperar_y_confirmar_popup(timeout=8)              # detecta popup y clic en Sí
+    # Reintentos: Enter cada 1.5s hasta que FB60 aparezca (máx 12s)
+    for _intento in range(_MAX_INTENTOS_POPUP):
+        time.sleep(_SLEEP_LARGO)
+        if _TITULO_FB60.lower() in SAP.titulo_actual().lower():
+            break
+        SAP.enter()
+        _log.info("Popup ZFIEC015: Enter intento %d", _intento + 1)
     try:
         SAP.esperar_titulo(_TITULO_FB60, timeout=_TIMEOUT_FB60)
         return True

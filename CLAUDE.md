@@ -103,7 +103,7 @@ SAP/
    - Centro Costo: `escribir()` directo
 7. `_salir_tabla_y_limpiar_advertencia()` — `salir_tabla()` (4× Ctrl+Shift+Tab) → Enter ×2
 8. `_llenar_pestana_pago()` — Ctrl+Shift+AvPág → 3× Down → `_pegar(via_pago)`
-9. `_llenar_pestana_detalle()` — Ctrl+Shift+AvPág → 1 Tab → `_pegar(texto_cabecera)`
+9. `_llenar_pestana_detalle()` — Ctrl+Shift+AvPág → 1 Tab → `_pegar(texto_cabecera)` → 2× `pestana_anterior()` → vuelve a Datos básicos (doc 2+ abre con cursor en Acreedor)
 10. `_contabilizar_o_cancelar()`:
     - **Modo prueba** (`CONTABILIZAR=0`): F12 → Enter (Sí tiene foco por defecto en popup de abandono — NO usar Tab antes)
     - **Modo real** (`CONTABILIZAR=1`): `SAP.tab(1)` → pywinauto `click_input()` en botón Contabilizar (Footer → auto_id=4004) → `_SLEEP_POPUP` (2s) → 3× Enter para cerrar popup "Información" embebido → retorna "OK"
@@ -244,19 +244,22 @@ Aparece después de mostrar bancos y período, antes de abrir SAP. Permite elegi
 
 ---
 
-## Estado actual (24/06/2026)
+## Estado actual (29/06/2026)
 
 - Flujo end-to-end funcional y verificado en **producción**: login → ZFIEC015 → FB60 (todos los campos) → contabilización real (pywinauto click_input + Enter) → múltiples documentos y múltiples bancos
 - Todo teclado SAP via **pynput** excepto Ctrl+/ (único en pyautogui). pywinauto para botón Contabilizar.
 - `_contabilizar()`: click_input() → 2s sleep → 3× Enter cierra popup "Información" embebido
 - Grilla vacía → retorno limpio `([], [])`, sin error ni correo
-- Constantes de timing en bloque `_SLEEP_*` al inicio de cada archivo — sin magic numbers en funciones
+- Todos los sleeps y timeouts en bloques `_SLEEP_*` / `_TIMEOUT_*` al inicio de cada archivo — sin magic numbers en funciones
 - `_MAX_INTENTOS_POPUP=3` en zfiec015_kb para retry del popup HTML de ZFIEC015
+- `_TIMEOUT_POPUP_CONFIRM=2.0s` en zfiec015_kb — detecta popup por pantalla via pywinauto antes del Enter fallback
 - `combancos.spec`: pywinauto agregado a hiddenimports para build correcto
 - Errores por banco: loguean con `exc_info=True`, envían correo y continúan (`continue`, no `break`)
 - SAP se cierra automáticamente al final (`cerrar_sap()` con `/nend`)
 - Menú interactivo al inicio para elegir cantidad de docs y modo (prueba/real) sin editar .env
 - `_posicion_normal` funciona para primer Y subsecuentes ingresos FB60 (verificado en producción)
+- `_llenar_pestana_detalle()` regresa a Datos básicos con 2× `pestana_anterior()` — doc 2+ abre con cursor en Acreedor
+- `_llenar_resto_tabla()`: pre-sleep `_SLEEP_MEDIO` antes de `activar()` en los tres campos (fix máquina rápida: Ctrl+V llega con foco asentado)
 
 ---
 
@@ -282,6 +285,4 @@ El menú sobreescribe el valor del `.env` si se selecciona una opción distinta.
 
 ## Pendientes
 
-- [ ] Completar números de proveedor SAP para Pacífico, Diners, Internacional, Guayaquil en `bancos.json`
-- [ ] Verificar columna de estado en grilla (`MSTAT`) para filtrar filas ya procesadas
-- [x] Cerrar SAP: popup "Salir del sistema" es top-level win32. "No" es botón por defecto — solución: `AttachThreadInput` + `BringWindowToTop` + `SetForegroundWindow` → Tab (mueve a "Sí") + pynput Enter. Integrado en `cerrar_sap()` Intento 2.
+*(ninguno)*
