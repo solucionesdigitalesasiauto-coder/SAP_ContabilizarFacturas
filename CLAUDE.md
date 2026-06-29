@@ -244,7 +244,7 @@ Aparece después de mostrar bancos y período, antes de abrir SAP. Permite elegi
 
 ---
 
-## Estado actual (29/06/2026)
+## Estado actual (29/06/2026) — `v1.0.1` (tag git: primera versión liberada a producción)
 
 - Flujo end-to-end funcional y verificado en **producción**: login → ZFIEC015 → FB60 (todos los campos) → contabilización real (pywinauto click_input + Enter) → múltiples documentos y múltiples bancos
 - Todo teclado SAP via **pynput** excepto Ctrl+/ (único en pyautogui). pywinauto para botón Contabilizar.
