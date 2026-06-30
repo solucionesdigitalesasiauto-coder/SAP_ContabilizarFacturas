@@ -1,7 +1,7 @@
 {
   "bancos": [
     {
-      "orden":            5,
+      "orden":            3,
       "nombre":           "AUSTRO",
       "cuenta_mayor_sap": "1000004754",
       "cuenta_mayor":     "8110200002",
@@ -28,7 +28,7 @@
       "texto_comision":   "COMISION BANCO PICHINCHA"
     },
     {
-      "orden":            3,
+      "orden":            2,
       "nombre":           "GUAYAQUIL",
       "cuenta_mayor_sap": "1000001661",
       "cuenta_mayor":     "8110200007",
@@ -37,7 +37,7 @@
       "texto_comision":   "COMISION BANCO GUAYAQUIL"
     },
     {
-      "orden":            1,
+      "orden":            5,
       "nombre":           "DINERS",
       "cuenta_mayor_sap": "1000004516",
       "cuenta_mayor":     "8110200021",
@@ -46,7 +46,7 @@
       "texto_comision":   "COMISION BANCO DINERS"
     },
     {
-      "orden":            2,
+      "orden":            1,
       "nombre":           "BOLIVARIANO",
       "cuenta_mayor_sap": "1000083356",
       "cuenta_mayor":     "8110200008",

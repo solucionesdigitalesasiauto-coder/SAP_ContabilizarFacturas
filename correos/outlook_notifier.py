@@ -149,9 +149,6 @@ class OutlookNotifier:
             subject (str): Asunto del correo.
             html_body (str): Cuerpo HTML completo del mensaje.
 
-        Returns:
-            None
-
         Hardcoded:
             - "Outlook.Application": nombre del objeto COM de Outlook (STRING)
             - 0: CreateItem(0) = MailItem en Outlook (NÚMERO MÁGICO Outlook)
@@ -183,9 +180,6 @@ class OutlookNotifier:
             batch_label (str): Identificador del proceso/banco donde ocurrió el error.
             description (str | None): Descripción personalizada del error.
                                       Si es None usa el texto genérico por defecto.
-
-        Returns:
-            None
 
         Hardcoded:
             - _COLOR_ERROR = "#c0392b": color rojo para errores (ESTILO)

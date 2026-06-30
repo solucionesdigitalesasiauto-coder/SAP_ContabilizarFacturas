@@ -64,9 +64,6 @@ def _press(key_name: str):
     Args:
         key_name (str): Nombre de tecla (ej. 'enter', 'tab', 'f8') o carácter.
 
-    Returns:
-        None
-
     Hardcoded:
         - _SLEEP_CORTO = 0.05: pausa entre press y release (TIMING)
     """
@@ -255,22 +252,17 @@ def posicionar_ventana(x=None, y=None, ancho=None, alto=None):
         ancho (int, optional): Ancho en pixels. Default: SAP_WIN_ANCHO del .env.
         alto (int, optional): Alto en pixels. Default: SAP_WIN_ALTO del .env.
 
-    Returns:
-        None
-
     Raises:
         RuntimeError: Si no hay ventana SAP abierta.
 
-    Hardcoded:
-        - "0", "1024", "768": valores por defecto de posición/tamaño (CONFIG)
     """
     import os, ctypes
-    x     = int(os.getenv("SAP_WIN_X",     "0"))    if x     is None else x
-    y     = int(os.getenv("SAP_WIN_Y",     "0"))    if y     is None else y
-    _ancho_cfg = int(os.getenv("SAP_WIN_ANCHO", "1024")) if ancho is None else ancho
+    x     = int(os.getenv("SAP_WIN_X",     "0")) if x     is None else x
+    y     = int(os.getenv("SAP_WIN_Y",     "0")) if y     is None else y
+    _ancho_cfg = int(os.getenv("SAP_WIN_ANCHO", "0")) if ancho is None else ancho
     ancho = ctypes.windll.user32.GetSystemMetrics(0) if _ancho_cfg == 0 else _ancho_cfg
-    _alto_cfg = int(os.getenv("SAP_WIN_ALTO",  "768"))  if alto  is None else alto
-    alto  = ctypes.windll.user32.GetSystemMetrics(1) if _alto_cfg == 0 else _alto_cfg
+    _alto_cfg  = int(os.getenv("SAP_WIN_ALTO",  "0")) if alto  is None else alto
+    alto  = ctypes.windll.user32.GetSystemMetrics(1) if _alto_cfg  == 0 else _alto_cfg
     hwnd = _encontrar_hwnd()
     if not hwnd:
         raise RuntimeError("Ventana SAP no encontrada")
@@ -289,9 +281,6 @@ def mover_a_origen():
     """Mueve la ventana SAP a (0,0) sin cambiar su tamaño.
 
     Necesario antes de clics con coordenadas calibradas en posición (0,0).
-
-    Returns:
-        None
     """
     hwnd = _encontrar_hwnd()
     if not hwnd:
@@ -309,9 +298,6 @@ def info_ventana():
     """Imprime en consola las coordenadas y tamaño de la ventana SAP.
 
     Útil para diagnóstico y calibración de coordenadas relativas.
-
-    Returns:
-        None
     """
     hwnd = _encontrar_hwnd()
     if not hwnd:
@@ -335,9 +321,6 @@ def escribir(texto, delay=_INTERVAL_WRITE):
     Args:
         texto (str | int): Texto a escribir en el campo activo.
         delay (float): Pausa entre caracteres en segundos. Default: 0.05.
-
-    Returns:
-        None
     """
     pyautogui.write(str(texto), interval=delay)
 
@@ -347,9 +330,6 @@ def tecla(key):
 
     Args:
         key (str): Nombre de tecla del _KEY_MAP (ej. 'enter', 'down', 'f8').
-
-    Returns:
-        None
     """
     _press(key)
 
@@ -362,9 +342,6 @@ def combo(*keys):
 
     Args:
         *keys (str): Teclas en orden (ej. 'ctrl', '/').
-
-    Returns:
-        None
     """
     pyautogui.hotkey(*keys)
 
@@ -374,9 +351,6 @@ def tab(n=1):
 
     Args:
         n (int): Número de tabs a enviar. Default: 1.
-
-    Returns:
-        None
     """
     tab_pynput(n)
 
@@ -388,9 +362,6 @@ def tab_pynput(n=1):
 
     Args:
         n (int): Número de tabs. Default: 1.
-
-    Returns:
-        None
 
     Hardcoded:
         - _SLEEP_CORTO = 0.05: pausa dentro de press/release (TIMING)
@@ -408,9 +379,6 @@ def shift_tab(n=1):
 
     Args:
         n (int): Número de Shift+Tab. Default: 1.
-
-    Returns:
-        None
     """
     for _ in range(n):
         with _kb.pressed(Key.shift):
@@ -421,9 +389,6 @@ def shift_tab(n=1):
 
 def copiar():
     """Copia el campo activo al portapapeles con Ctrl+A (seleccionar) + Ctrl+C.
-
-    Returns:
-        None
     """
     with _kb.pressed(Key.ctrl):
         _kb.press('a'); _kb.release('a')
@@ -448,9 +413,6 @@ def leer_portapapeles() -> str:
 
 def pegar_como_texto():
     """Lee el portapapeles y lo tipea en el campo activo (Ctrl+A + write).
-
-    Returns:
-        None
     """
     texto = leer_portapapeles()
     if texto:
@@ -466,9 +428,6 @@ def pegar_fecha():
     SAP salta los puntos de la máscara automáticamente al tipear,
     por lo que se escribe el texto completo (DD.MM.YYYY) carácter a carácter.
 
-    Returns:
-        None
-
     Hardcoded:
         - 0.05: intervalo entre caracteres (TIMING)
     """
@@ -481,11 +440,7 @@ def pegar_fecha():
 
 
 def enter():
-    """Envía Enter via pynput.
-
-    Returns:
-        None
-    """
+    """Envía Enter via pynput."""
     _press('enter')
 
 
@@ -494,9 +449,6 @@ def limpiar():
 
     Usa Home + Shift+End para seleccionar dentro del campo.
     No usa Shift+Home porque en SAP salta al primer campo del formulario.
-
-    Returns:
-        None
     """
     _press('home')
     with _kb.pressed(Key.shift):
@@ -510,9 +462,6 @@ def campo(texto):
 
     Args:
         texto (str): Texto a escribir tras limpiar.
-
-    Returns:
-        None
     """
     limpiar()
     escribir(texto)
@@ -525,9 +474,6 @@ def campo_ctrlA(texto):
 
     Args:
         texto (str): Texto a escribir tras limpiar.
-
-    Returns:
-        None
     """
     with _kb.pressed(Key.ctrl):
         _kb.press('a'); _kb.release('a')
@@ -544,9 +490,6 @@ def campo_fecha(texto):
 
     Args:
         texto (str): Fecha a escribir (ej. "01.06.2026").
-
-    Returns:
-        None
     """
     limpiar()
     escribir(texto)
@@ -554,9 +497,6 @@ def campo_fecha(texto):
 
 def f8():
     """Envía F8 (Ejecutar en SAP).
-
-    Returns:
-        None
     """
     _press('f8')
 
@@ -566,9 +506,6 @@ def salir_tabla():
 
     Sube el foco desde dentro de la tabla hasta el encabezado de cabecera.
     Desde cabecera funciona Ctrl+Shift+AvPág para cambiar de pestaña.
-
-    Returns:
-        None
 
     Hardcoded:
         - 4: número de Ctrl+Shift+Tab necesarios para salir (NÚMERO MÁGICO calibrado)
@@ -602,11 +539,7 @@ def pestana_anterior():
     time.sleep(_SLEEP_PESTANA)
 
 def ctrl_s():
-    """Envía Ctrl+S (Guardar/Contabilizar en SAP) via pynput VK directo.
-
-    Returns:
-        None
-    """
+    """Envía Ctrl+S (Guardar/Contabilizar en SAP) via pynput VK directo."""
     from pynput.keyboard import KeyCode
     _s_vk = KeyCode.from_vk(0x53)
     with _kb.pressed(Key.ctrl):
@@ -614,28 +547,16 @@ def ctrl_s():
 
 
 def escape():
-    """Envía Escape via pynput.
-
-    Returns:
-        None
-    """
+    """Envía Escape via pynput."""
     _press('escape')
 
 
 def f3():
-    """Envía F3 (Retroceder en SAP) via pynput.
-
-    Returns:
-        None
-    """
+    """Envía F3 (Retroceder en SAP) via pynput."""
     _press('f3')
 
 def f12():
-    """Envía F12 (Cancelar/Abandonar en SAP) via pynput.
-
-    Returns:
-        None
-    """
+    """Envía F12 (Cancelar/Abandonar en SAP) via pynput."""
     _press('f12')
 
 
@@ -650,9 +571,6 @@ def click_en(rel_x, rel_y, boton='left'):
         rel_x (int): Posición X relativa al borde izquierdo del cliente.
         rel_y (int): Posición Y relativa al borde superior del cliente.
         boton (str): 'left', 'right' o 'middle'. Default: 'left'.
-
-    Returns:
-        None
     """
     x, y = pos_en_ventana(rel_x, rel_y)
     pyautogui.click(x, y, button=boton)
@@ -665,9 +583,6 @@ def doble_click_en(rel_x, rel_y):
     Args:
         rel_x (int): Posición X relativa.
         rel_y (int): Posición Y relativa.
-
-    Returns:
-        None
     """
     x, y = pos_en_ventana(rel_x, rel_y)
     pyautogui.doubleClick(x, y)
@@ -680,9 +595,6 @@ def click_win32(rel_x, rel_y):
     Args:
         rel_x (int): Posición X relativa al área cliente SAP.
         rel_y (int): Posición Y relativa al área cliente SAP.
-
-    Returns:
-        None
     """
     x, y = pos_en_ventana(rel_x, rel_y)
     win32api.SetCursorPos((x, y))
@@ -703,9 +615,6 @@ def click_postmsg(grid_rel_x, grid_rel_y, grid_clase="SAPALVGrid"):
         grid_rel_x (int): Coordenada X dentro del control SAPALVGrid.
         grid_rel_y (int): Coordenada Y dentro del control SAPALVGrid.
         grid_clase (str): Clase Win32 del control. Default: "SAPALVGrid".
-
-    Returns:
-        None
 
     Raises:
         RuntimeError: Si no se encuentra la ventana SAP o el control de grilla.
@@ -749,9 +658,6 @@ def ir_a(tcode):
         tcode (str): Código de transacción SAP (ej. "ZFIEC015", "FB60").
                      Si no comienza con '/' se antepone '/n' para forzar navegación.
 
-    Returns:
-        None
-
     Hardcoded:
         - '/n': prefijo de navegación SAP (STRING SAP)
         - 1.5: espera tras Enter del tcode (TIMING)
@@ -776,22 +682,14 @@ def ir_a(tcode):
 # ─────────────────────────────────────────────────────────────
 
 def confirmar_popup_si():
-    """Confirma un popup SAP presionando Enter (botón Sí / OK por defecto).
-
-    Returns:
-        None
-    """
+    """Confirma un popup SAP presionando Enter (botón Sí / OK por defecto)."""
     time.sleep(_SLEEP_LARGO)
     enter()
     time.sleep(_SLEEP_MEDIO)
 
 
 def cancelar_popup():
-    """Cancela un popup SAP presionando Escape.
-
-    Returns:
-        None
-    """
+    """Cancela un popup SAP presionando Escape."""
     time.sleep(_SLEEP_MEDIO)
     escape()
     time.sleep(_SLEEP_MEDIO)
@@ -802,9 +700,6 @@ def cerrar_sap():
 
     Intento 1: SAP Scripting — cierra la ventana y acepta popup de confirmación.
     Intento 2: SC_CLOSE + hilo separado que presiona Tab+Enter en el popup.
-
-    Returns:
-        None
 
     Hardcoded:
         - "wnd[1]/usr/btnSPOP-VAROPTION1": ID botón Sí en popup SAP (STRING SAP)

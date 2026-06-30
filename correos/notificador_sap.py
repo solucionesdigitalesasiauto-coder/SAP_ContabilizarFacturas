@@ -87,9 +87,6 @@ class NotificadorSAP:
                 - estado (str): "CONTABILIZADO" | "ERROR" | "OMITIDO".
                 - detalle (str): Mensaje de error o detalle adicional.
 
-        Returns:
-            None
-
         Hardcoded:
             - _MAX_DETALLE = 80: máximo de chars en columna Detalle (CONFIG)
             - "CONTABILIZADO", "ERROR", "OMITIDO": valores de estado válidos (STRING)
@@ -200,9 +197,6 @@ class NotificadorSAP:
         Args:
             banco (str): Nombre del banco donde ocurrió el error.
             error (str): Mensaje de error o traceback completo.
-
-        Returns:
-            None
 
         Hardcoded:
             - "ZFIEC015 / FB60": transacciones SAP mencionadas en el cuerpo (STRING)

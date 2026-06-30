@@ -89,6 +89,23 @@ def _get_session():
 # ── PASO 1: Llenar formulario ZFIEC015 ───────────────────────
 
 def _validar_campos_zfiec(proveedor, fecha_desde, fecha_hasta, sociedad, tipo_doc):
+    """Valida via OCR que los campos del formulario ZFIEC015 coincidan con lo esperado.
+
+    Lee valores_bancos.json (generado por procesar_banco) y compara con lo
+    detectado por leer_valores_zfiec015(). Lanza RuntimeError si hay diferencia,
+    lo que dispara el retry en procesar_banco. Si el JSON no existe o el módulo
+    OCR no está disponible, la validación se omite sin error.
+
+    Args:
+        proveedor (str): Número de proveedor esperado.
+        fecha_desde (str): Fecha inicio esperada en formato DD.MM.YYYY.
+        fecha_hasta (str): Fecha fin esperada en formato DD.MM.YYYY.
+        sociedad (str): Código de sociedad esperado.
+        tipo_doc (str): Tipo de documento esperado.
+
+    Raises:
+        RuntimeError: Si algún campo detectado por OCR no coincide con el esperado.
+    """
     import json, pathlib
     _base = pathlib.Path(sys.executable).parent if getattr(sys, 'frozen', False) \
             else pathlib.Path(__file__).parent.parent
@@ -105,10 +122,12 @@ def _validar_campos_zfiec(proveedor, fecha_desde, fecha_hasta, sociedad, tipo_do
         _log.warning("Validación ZFIEC015 omitida — %s", exc)
         return
     detectados = leer_valores_zfiec015()
+    # Solo comparar campos que el OCR de ZFIEC015 puede detectar
+    # (valores_bancos.json contiene también campos de FB60 como "Texto Cabecera")
     diferencias = [
         f"{campo}: esperado={val_esp!r} detectado={detectados.get(campo)!r}"
         for campo, val_esp in esperados.items()
-        if detectados.get(campo) != val_esp
+        if campo in detectados and detectados[campo] != val_esp
     ]
     if diferencias:
         msg = "Validación ZFIEC015 fallida:\n  " + "\n  ".join(diferencias)
@@ -207,9 +226,6 @@ def _llenar_form_scripting(session, sociedad, proveedor,
         fecha_hasta (str): Fecha fin en formato DD.MM.YYYY.
         tipo_doc (str): Tipo de documento ZFIEC (ej. "01").
 
-    Returns:
-        None
-
     Hardcoded:
         - sendVKey(8): código de F8 en SAP Scripting (NÚMERO MÁGICO SAP)
     """
@@ -264,9 +280,6 @@ def _llenar_form_teclado(sociedad, proveedor, fecha_desde, fecha_hasta, tipo_doc
         fecha_desde (str): Fecha inicio DD.MM.YYYY.
         fecha_hasta (str): Fecha fin DD.MM.YYYY.
         tipo_doc (str): Tipo de documento.
-
-    Returns:
-        None
 
     Hardcoded:
         - _TAB_PROVEEDOR, _TAB_FECHA_HASTA, _TAB_TIPO_DOC, _TAB_PENDIENTE: tabulaciones (CONFIG)
@@ -571,9 +584,6 @@ def _cerrar_fb60_si_abierto() -> None:
 
     Detecta si la pantalla activa es FB60 por el título. Si lo está,
     envía F12 y confirma el popup de abandono con Enter.
-
-    Returns:
-        None
 
     Hardcoded:
         - _TITULO_FB60, _TITULO_FB60_ALT: títulos de FB60 (STRING)

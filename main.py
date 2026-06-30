@@ -42,6 +42,18 @@ load_dotenv(os.path.join(_BASE, ".env"))
 load_dotenv(os.path.join(_BASE, "correos", ".env.privado"), override=True)
 
 def _setup_logging() -> str:
+    """Configura el sistema de logging con handler de archivo y retorna la ruta usada.
+
+    Prueba rutas candidatas en orden hasta encontrar una con permisos de escritura.
+    Si todas fallan retorna cadena vacía (el proceso sigue sin log de archivo).
+
+    Returns:
+        str: Ruta del archivo de log creado, o "" si ninguna candidata fue accesible.
+
+    Hardcoded:
+        - "sap_combancos.log": nombre del archivo de log (STRING)
+        - "ASIAUTO/ComBancos": subdirectorio en APPDATA (STRING)
+    """
     fmt = "%(asctime)s [%(levelname)s] [%(module)s] %(message)s"
     candidatos = [
         os.path.join(_BASE, "sap_combancos.log"),
@@ -218,9 +230,6 @@ def _traer_al_frente(hwnd):
     Args:
         hwnd (int): Handle de la ventana a traer al frente.
 
-    Returns:
-        None
-
     Hardcoded:
         - 0.3, 0.5: tiempos de espera antes/después de SetForegroundWindow (TIMING)
     """
@@ -328,9 +337,6 @@ def _mover_ventana_origen(hwnd):
     Args:
         hwnd (int): Handle de la ventana a mover.
 
-    Returns:
-        None
-
     Hardcoded:
         - 0, 0: coordenadas de destino (CONFIG — calibradas para resolución actual)
         - 0.2: tiempo de espera tras mover (TIMING)
@@ -392,9 +398,6 @@ def conectar_ps4(hwnd_logon):
     Args:
         hwnd_logon (int): HWND de la ventana SAP Logon.
 
-    Returns:
-        None
-
     Hardcoded:
         - _CLICK_OFFSET_Y_LOGON = 80: offset Y para clic en la lista (NÚMERO MÁGICO)
         - "p": letra inicial de PS4 para type-ahead (STRING — depende del nombre del sistema)
@@ -448,9 +451,6 @@ def llenar_credenciales():
     Si no está disponible, usa teclado con campo_ctrlA.
     Maneja automáticamente el popup de sesión múltiple y el popup de "Login correcto".
     Verifica que Caps Lock esté desactivado antes de escribir la contraseña.
-
-    Returns:
-        None
 
     Raises:
         RuntimeError: Si las credenciales no están en .env, o si Caps Lock no se pudo desactivar.
@@ -533,9 +533,6 @@ def hacer_login():
     - SAP está en pantalla de login → llena credenciales directamente.
     - SAP no está abierto → lanza SAP Logon, conecta PS4, espera sesión, llena credenciales.
     - Primer intento fallido → reintenta conectar PS4.
-
-    Returns:
-        None
 
     Raises:
         RuntimeError: Si no se puede conectar a PS4 o las credenciales son incorrectas.
@@ -636,6 +633,39 @@ def fechas_mes_actual():
 # ─────────────────────────────────────────────────────────────
 # Procesamiento
 # ─────────────────────────────────────────────────────────────
+def escribir_valores_bancos_esperados(banco: dict, fecha_desde: str, fecha_hasta: str):
+    """Escribe los valores esperados para validar ZFIEC015. No deben ser pisados por OCR."""
+    import json as _json
+    import pathlib as _pathlib
+
+    ruta = _pathlib.Path(_BASE) / "valores_bancos.json"
+
+    try:
+        base = _json.loads(ruta.read_text(encoding="utf-8")) if ruta.exists() else {}
+    except Exception:
+        base = {}
+
+    base.update({
+        "Sociedad":                 os.getenv("SAP_SOCIEDAD", ""),
+        "Proveedor":                banco["cuenta_mayor_sap"],
+        "FechaInicio":              fecha_desde,
+        "FechaFin":                 fecha_hasta,
+        "Código Tipo de Documento": os.getenv("TIPO_DOC_ZFIEC", ""),
+        "Texto Cabecera":           banco["texto_cabecera"],
+    })
+
+    ruta.write_text(
+        _json.dumps(base, ensure_ascii=False, indent=4),
+        encoding="utf-8"
+    )
+
+    _log.info(
+        "valores_bancos.json esperado actualizado: Proveedor=%r FechaInicio=%r FechaFin=%r TipoDoc=%r",
+        base.get("Proveedor"),
+        base.get("FechaInicio"),
+        base.get("FechaFin"),
+        base.get("Código Tipo de Documento"),
+    )
 
 def procesar_banco(banco: dict, fecha_desde: str, fecha_hasta: str, max_docs: int = None):
     """Busca documentos pendientes en ZFIEC015 y procesa cada uno en FB60.
@@ -664,21 +694,9 @@ def procesar_banco(banco: dict, fecha_desde: str, fecha_hasta: str, max_docs: in
     print(f"  Período: {fecha_desde} al {fecha_hasta}")
     print(f"{'─'*55}")
 
-    # Actualizar valores_bancos.json con datos del banco/período actual.
-    # Tipo de Procesamiento se preserva del JSON existente — nunca se modifica.
-    _ruta_bancos = _pathlib.Path(_BASE) / "valores_bancos.json"
-    try:
-        _base = _json.loads(_ruta_bancos.read_text(encoding="utf-8")) if _ruta_bancos.exists() else {}
-    except Exception:
-        _base = {}
-    _base.update({
-        "Sociedad":                 os.getenv("SAP_SOCIEDAD", "2000"),
-        "Proveedor":                banco["cuenta_mayor_sap"],
-        "FechaInicio":              fecha_desde,
-        "FechaFin":                 fecha_hasta,
-        "Código Tipo de Documento": os.getenv("TIPO_DOC_ZFIEC", "01"),
-    })
-    _ruta_bancos.write_text(_json.dumps(_base, ensure_ascii=False, indent=4), encoding="utf-8")
+    # Escribir valores esperados iniciales para ZFIEC015
+    escribir_valores_bancos_esperados(banco, fecha_desde, fecha_hasta)
+
 
     # Actualizar valores_fb60.json con campos contables del banco/período actual.
     # El resto de campos (Titulo, Clase doc, etc.) se preservan del JSON existente.
@@ -688,16 +706,40 @@ def procesar_banco(banco: dict, fecha_desde: str, fecha_hasta: str, max_docs: in
     except Exception:
         _base_fb60 = {}
     _base_fb60.update({
+        "Combo B2":     _os.getenv("INDICADOR_IMPUESTO", "B2"),
         "Cta.mayor":    banco["cuenta_mayor"],
         "Centro coste": banco["centro_costo"],
+        "Texto":        banco["texto_comision"],
     })
+    # Las fechas las valida el OCR cruzando factura vs contab. — no deben estar en el JSON esperado
+    _base_fb60.pop("Fecha factura", None)
+    _base_fb60.pop("Fecha contab.", None)
     _ruta_fb60.write_text(_json.dumps(_base_fb60, ensure_ascii=False, indent=4), encoding="utf-8")
 
+
     count = None
+
     for _intento in range(_MAX_INTENTOS_BANCO):
         try:
+            escribir_valores_bancos_esperados(banco, fecha_desde, fecha_hasta)
+
+            _ruta_debug_vb = _pathlib.Path(_BASE) / "valores_bancos.json"
+
+            try:
+                _debug_vb = _json.loads(_ruta_debug_vb.read_text(encoding="utf-8"))
+            except Exception as _e:
+                _debug_vb = {"_error": str(_e)}
+
+            _log.info(
+                "Antes de buscar intento %d/%d — valores_bancos.json: %r",
+                _intento + 1,
+                _MAX_INTENTOS_BANCO,
+                _debug_vb
+            )
+
             count = buscar(banco["cuenta_mayor_sap"], fecha_desde, fecha_hasta)
             break
+
         except RuntimeError as _e:
             if _intento < _MAX_INTENTOS_BANCO - 1:
                 print(f"  ↺ Validación fallida — reintento {_intento + 1}/{_MAX_INTENTOS_BANCO - 1}...")
@@ -706,6 +748,7 @@ def procesar_banco(banco: dict, fecha_desde: str, fecha_hasta: str, max_docs: in
             else:
                 _log.error("buscar fallido tras %d intentos: %s", _MAX_INTENTOS_BANCO, _e, exc_info=True)
                 raise
+
 
     if count == 0:
         print("  Sin documentos pendientes.")
@@ -725,9 +768,6 @@ def _notificar(notif, banco: str, procesados: list, errores: list, registros: li
         procesados (list): Lista de documentos procesados exitosamente.
         errores (list): Lista de errores ocurridos.
         registros (list): Lista de dicts con formato para el correo.
-
-    Returns:
-        None
     """
     if not notif:
         return
@@ -747,9 +787,6 @@ def _notificar_error(notif, banco: str, error: str) -> None:
         notif: Instancia de NotificadorSAP, o None si deshabilitado.
         banco (str): Nombre del banco donde ocurrió el error.
         error (str): Mensaje o traceback del error.
-
-    Returns:
-        None
     """
     if not notif:
         return
@@ -765,9 +802,6 @@ def imprimir_resumen(resultados: list):
 
     Args:
         resultados (list[dict]): Lista de dicts con banco, procesados y errores.
-
-    Returns:
-        None
 
     Hardcoded:
         - "═" * 55, "─" * 55: separadores visuales (ESTILO)
@@ -847,9 +881,6 @@ def _validar_entorno():
     2. Verificar/desactivar Caps Lock.
     3. Abrir SAP y hacer login automático.
     4. Confirmar que SAP quedó en el menú principal (via Scripting si disponible).
-
-    Returns:
-        None
 
     Raises:
         SystemExit(1): Si hay error de conexión SAP, Caps Lock no se puede desactivar,
@@ -940,6 +971,16 @@ def main():
         _log.warning(f"Notificaciones deshabilitadas: {e}")
         print(f"  [!] Notificaciones deshabilitadas: {e}")
         notif = None
+
+    # Inicializar "Texto Cabecera" en valores_bancos.json antes de iterar bancos
+    import pathlib as _pl_init
+    _ruta_vb = _pl_init.Path(_BASE) / "valores_bancos.json"
+    try:
+        _vb = json.loads(_ruta_vb.read_text(encoding="utf-8")) if _ruta_vb.exists() else {}
+    except Exception:
+        _vb = {}
+    _vb["Texto Cabecera"] = ""
+    _ruta_vb.write_text(json.dumps(_vb, ensure_ascii=False, indent=4), encoding="utf-8")
 
     resultados = []
     for banco in bancos_a_procesar:

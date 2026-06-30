@@ -52,11 +52,12 @@ def _pegar(valor: str) -> None:
     """
     texto = str(valor)
     pyperclip.copy(texto)
+    # La escritura al portapapeles puede ser asíncrona en algunos drivers de Windows
     for _ in range(_MAX_REINTENTOS_CLIP):
         if pyperclip.paste() == texto:
             break
         time.sleep(_SLEEP_MICRO)
-    time.sleep(_SLEEP_MICRO)
+    time.sleep(_SLEEP_MICRO)           # SAP necesita un tick entre copy y paste para asentar el foco
     with _kbd.pressed(_Key.ctrl):
         _kbd.press('v')
         _kbd.release('v')
@@ -81,10 +82,12 @@ def _confirmar_abandon_fb60(timeout: float = _TIMEOUT_POPUP_ABANDON) -> bool:
     t0 = time.time()
     while time.time() - t0 < timeout:
         try:
+            # backend="uia" (no "win32") — SAP 800 expone los botones de popup solo via UIA
             app = Application(backend="uia").connect(
                 title_re=".*Registrar factura.*", timeout=0.5
             )
             win = app.window(title_re=".*Registrar factura.*")
+            # SAP 800 mapea el botón "Sí" como Button, Hyperlink o ListItem según tema GuiXT
             for ctrl_type in ("Button", "Hyperlink", "ListItem"):
                 try:
                     btn = win.child_window(title="Sí", control_type=ctrl_type)
@@ -95,7 +98,7 @@ def _confirmar_abandon_fb60(timeout: float = _TIMEOUT_POPUP_ABANDON) -> bool:
                         return True
                 except Exception:
                     continue
-            # Botón no accesible via UIA — Tab+Enter fallback
+            # Botón no accesible via UIA — SAP posiciona foco en "Sí" por defecto: Tab+Enter
             _log.debug("Botón 'Sí' no encontrado via UIA — Tab+Enter fallback")
             _kbd.press(_Key.tab);   _kbd.release(_Key.tab)
             time.sleep(0.2)
@@ -113,6 +116,14 @@ def _confirmar_abandon_fb60(timeout: float = _TIMEOUT_POPUP_ABANDON) -> bool:
 
 
 def _validar_pantalla_fb60() -> None:
+    """Valida por OCR los campos de Datos básicos FB60 antes de cambiar de pestaña.
+
+    Importa leer_y_validar_fb60 en tiempo de ejecución para evitar importación
+    circular y para manejar graciosamente la ausencia de Tesseract.
+    Si falla: cancela el doc con F12 y lanza ValidacionFB60Error — el caller
+    lo captura para saltar este documento y continuar con el siguiente.
+    """
+    # Import tardío: evita circular import y omite silenciosamente si Tesseract no está
     try:
         from transactions.validacion_Pantalla import leer_y_validar_fb60
     except (ImportError, SystemExit) as exc:
@@ -123,16 +134,41 @@ def _validar_pantalla_fb60() -> None:
         difs = resultado["diferencias"]
         msg = "Validación FB60 fallida:\n  " + "\n  ".join(f"{k}: {v}" for k, v in difs.items())
         _log.error(msg)
-        SAP.activar(_TITULO_FB60)
+        SAP.activar(_TITULO_FB60)   # restaura foco: las screenshots OCR pueden haberlo quitado
         SAP.f12()
         time.sleep(_SLEEP_LARGO)
         _confirmar_abandon_fb60()
-        raise ValidacionFB60Error(msg)
+        raise ValidacionFB60Error(msg)   # capturado en zfiec015_kb para continuar con siguiente doc
     detectados = resultado.get("detectados", {})
     _log.info("Validación OCR FB60 OK. Valores detectados:")
     for k, v in detectados.items():
-        _log.info("  OCR %-25s %r", k, v)
+        _log.info("  OCR %-25s %s", k, repr(v) if v is not None else "N/D")
     print("  ✓ Validación FB60 OK")
+
+
+def _validar_pantalla_detalle_fb60() -> None:
+    """Valida por OCR que Txt.cabec. en la pestaña Detalle coincide con el valor esperado."""
+    # Import tardío: evita circular import y omite silenciosamente si Tesseract no está
+    try:
+        from transactions.validacion_Pantalla import leer_y_validar_fb60_detalle
+    except (ImportError, SystemExit) as exc:
+        _log.warning("Validación OCR FB60 Detalle omitida — %s", exc)
+        return
+    resultado = leer_y_validar_fb60_detalle()
+    if not resultado["valido"]:
+        difs = resultado["diferencias"]
+        msg = "Validación FB60 Detalle fallida:\n  " + "\n  ".join(f"{k}: {v}" for k, v in difs.items())
+        _log.error(msg)
+        SAP.activar(_TITULO_FB60)   # restaura foco antes de cancelar
+        SAP.f12()
+        time.sleep(_SLEEP_LARGO)
+        _confirmar_abandon_fb60()
+        raise ValidacionFB60Error(msg)   # capturado en zfiec015_kb para continuar con siguiente doc
+    detectados = resultado.get("detectados", {})
+    _log.info("Validación OCR FB60 Detalle OK. Valores detectados:")
+    for k, v in detectados.items():
+        _log.info("  OCR %-25s %s", k, repr(v) if v is not None else "N/D")
+    print("  ✓ Validación FB60 Detalle OK")
 
 
 def registrar_factura(banco: dict) -> dict:
@@ -156,6 +192,7 @@ def registrar_factura(banco: dict) -> dict:
             - cuenta_mayor (str): Cuenta mayor usada.
             - centro_costo (str): Centro de costo usado.
     """
+    # Leer parámetros contables del banco y del .env
     cuenta_mayor = banco.get("cuenta_mayor", "")
     centro_costo = banco.get("centro_costo", "")
     via_pago     = os.getenv("VIA_PAGO", "")
@@ -166,6 +203,7 @@ def registrar_factura(banco: dict) -> dict:
     _log.debug("FB60: cuenta_mayor=%r  centro_costo=%r", cuenta_mayor, centro_costo)
     time.sleep(_SLEEP_CORTO)
 
+    # Esperar y posicionar la ventana FB60
     SAP.esperar_titulo(_TITULO_FB60, timeout=_TIMEOUT_FB60)
     SAP.verificar_pantalla(_TITULO_FB60, "FB60-Inicio")
     SAP.posicionar_ventana()         # primero posicionar (puede redibujar SAP)
@@ -178,32 +216,46 @@ def registrar_factura(banco: dict) -> dict:
         return t1
 
     t = time.time()
-    fecha_capturada = _copiar_fecha_factura()
+
+    # Pestaña Datos básicos — cabecera
+    fecha_capturada = _copiar_fecha_factura()           # leer fecha del documento electrónico
     t = _t(f"fecha_factura → {fecha_capturada!r}", t)
     time.sleep(_SLEEP_CORTO)
-    _llenar_fecha_contabilizacion(fecha_capturada)
+    _llenar_fecha_contabilizacion(fecha_capturada)      # copiar misma fecha a Fecha Contab.
     t = _t(f"fecha_contabilizacion ← {fecha_capturada!r}", t)
     time.sleep(_SLEEP_CORTO)
-    _marcar_calc_impuestos()
+    _marcar_calc_impuestos()                            # activar checkbox Calc.Impuestos
     t = _t("calc_impuestos ✓", t)
     time.sleep(_SLEEP_CORTO)
-    _ingresar_impuestoB2(ind_impuesto)
+    _ingresar_impuestoB2(ind_impuesto)                  # indicador de impuesto (ej. B2)
     t = _t(f"indicador_impuesto ← {ind_impuesto!r}", t)
     time.sleep(_SLEEP_CORTO)
+
+    # Pestaña Datos básicos — tabla de posiciones
     _posicion_normal(cuenta_mayor, texto_com, centro_costo)
     t = _t(f"posicion_normal ← cta={cuenta_mayor!r} imp={_IMPORTE_AUTO!r} txt={texto_com!r} cc={centro_costo!r}", t)
     time.sleep(_SLEEP_CORTO)
-    _salir_tabla_y_limpiar_advertencia()
+    _salir_tabla_y_limpiar_advertencia()                # salir de la tabla + Enter x2 (limpia advertencia vencimiento)
     t = _t("salir_tabla ✓", t)
     time.sleep(_SLEEP_CORTO)
+
+    # Validación OCR — Datos básicos completos antes de cambiar de pestaña
     _validar_pantalla_fb60()
     t = _t("validacion_ocr ✓", t)
+
+    # Pestaña Pago — Vía pago
     _llenar_pestana_pago(via_pago)
     t = _t(f"pestana_pago ← {via_pago!r}", t)
     time.sleep(_SLEEP_CORTO)
+
+    # Pestaña Detalle — Txt.cabec.
     _llenar_pestana_detalle(texto_cab)
     t = _t(f"pestana_detalle ← {texto_cab!r}", t)
     time.sleep(_SLEEP_CORTO)
+
+    # Validación OCR — Txt.cabec. en pestaña Detalle
+    _validar_pantalla_detalle_fb60()
+    t = _t("validacion_ocr_detalle ✓", t)
 
     nro = _contabilizar_o_cancelar(fecha_capturada)
     _t(f"contabilizar → {nro!r}", t)
@@ -226,7 +278,7 @@ def _copiar_fecha_factura() -> str:
     """
     SAP.activar()
     SAP.tab(_TAB_FECHA_FACTURA)
-    SAP.copiar()
+    SAP.copiar()                   # Ctrl+A+C: selecciona todo el campo y copia (no solo Ctrl+C)
     time.sleep(_SLEEP_CORTO)
     return pyperclip.paste().strip()
 
@@ -246,7 +298,7 @@ def _llenar_fecha_contabilizacion(fecha: str) -> None:
     pyperclip.copy(fecha)
     SAP.activar()
     SAP.tab(_TAB_FECHA_CONTAB)
-    SAP.pegar_fecha()
+    SAP.pegar_fecha()              # tipeo carácter a carácter — la máscara de fecha SAP rechaza Ctrl+V directo
     time.sleep(_SLEEP_MEDIO)
 
 
@@ -260,8 +312,8 @@ def _marcar_calc_impuestos() -> None:
         None
     """
     SAP.activar()
-    SAP.tab(_TAB_CALC_IMP)
-    SAP.tecla('space')
+    SAP.tab(_TAB_CALC_IMP)         # 5 tabs acumulados desde Acreedor (no desde el campo anterior)
+    SAP.tecla('space')             # Space marca/desmarca el checkbox
     time.sleep(_SLEEP_CORTO)
 
 
@@ -279,13 +331,14 @@ def _ingresar_impuestoB2(ind_impuesto: str) -> None:
     """
     SAP.activar()
     time.sleep(_SLEEP_MEDIO)
+    # _TAB_IND_IMP=0: tras marcar checkbox el foco queda directamente aquí; guard para futura recalibración
     if _TAB_IND_IMP > 0:
         SAP.tab(_TAB_IND_IMP)
     SAP.escribir(ind_impuesto)
     time.sleep(_SLEEP_MEDIO)
-    SAP.activar()
+    SAP.activar()                  # SAP hace lookup de B2 y puede tardar varios ciclos
     time.sleep(_SLEEP_MEDIO)
-    SAP.tab(1)
+    SAP.tab(1)                     # confirmar y avanzar al siguiente campo
     time.sleep(_SLEEP_MEDIO)
 
 
@@ -333,8 +386,8 @@ def _llenar_resto_tabla(texto_com: str, centro_costo: str) -> None:
     """
     SAP.tab(_TAB_POS_IMPORTE)
     time.sleep(_SLEEP_MEDIO)
-    SAP.activar()
-    _pegar(_IMPORTE_AUTO)
+    SAP.activar()                  # foco puede perderse durante el sleep en máquinas rápidas
+    _pegar(_IMPORTE_AUTO)          # "*" = SAP calcula el total automáticamente
     time.sleep(_SLEEP_MEDIO)
 
     SAP.tab(_TAB_POS_TEXTO)
@@ -345,7 +398,7 @@ def _llenar_resto_tabla(texto_com: str, centro_costo: str) -> None:
 
     SAP.tab(_TAB_POS_CCOSTO)
     time.sleep(_SLEEP_MEDIO)
-    SAP.escribir(centro_costo)
+    SAP.escribir(centro_costo)     # escribir directo (no portapapeles) — campo numérico sin ambigüedad
     time.sleep(_SLEEP_LARGO)
 
 
@@ -359,12 +412,12 @@ def _salir_tabla_y_limpiar_advertencia() -> None:
         None
     """
     SAP.activar()
-    SAP.salir_tabla()
-    SAP.activar()
+    SAP.salir_tabla()              # 4× Ctrl+Shift+Tab: vuelve al encabezado desde la tabla
+    SAP.activar()                  # tabla y encabezado son contextos SAP distintos; restablecer foco
     SAP.enter()
     time.sleep(_SLEEP_CORTO)
     SAP.activar()
-    SAP.enter()   # limpia advertencia "vencimiento en el pasado"
+    SAP.enter()                    # segundo Enter: limpia advertencia "vencimiento en el pasado"
     time.sleep(_SLEEP_CORTO)
 
 
@@ -381,8 +434,9 @@ def _llenar_pestana_pago(via_pago: str) -> None:
         None
     """
     SAP.activar()
-    SAP.siguiente_pestana()
+    SAP.siguiente_pestana()        # Ctrl+Shift+AvPág — cambia a pestaña Pago
     time.sleep(_SLEEP_CORTO)
+    # 3× Down en lugar de Tab — Tab va a Condición de Pago; Down navega directamente a Vía pago
     SAP.tecla('down')
     time.sleep(_SLEEP_CORTO)
     SAP.tecla('down')
@@ -407,18 +461,19 @@ def _llenar_pestana_detalle(texto_cab: str) -> None:
         None
     """
     SAP.activar()
-    SAP.siguiente_pestana()
+    SAP.siguiente_pestana()        # Ctrl+Shift+AvPág — cambia a pestaña Detalle
     time.sleep(_SLEEP_MEDIO)
     SAP.activar()
-    SAP.tab(1)
+    SAP.tab(1)                     # → campo Txt.cabec.
     _pegar(texto_cab)
     time.sleep(_SLEEP_CORTO)
-    SAP.enter()
+    SAP.enter()                    # confirma el campo antes de salir de pestaña; sin esto SAP puede descartarlo
     SAP.activar()
     time.sleep(_SLEEP_CORTO)
 
 def _contabilizar_o_cancelar(fecha_capturada: str) -> str:
-    SAP.activar()
+    """Delega a _contabilizar, asegurando que ningún campo quede en edit mode."""
+    SAP.activar()                  # saca Txt.cabec. de edit mode; sin esto SAP ignora el clic en Contabilizar
     return _contabilizar(fecha_capturada)
 
 
@@ -437,15 +492,17 @@ def _contabilizar(fecha_capturada: str) -> str:
     Returns:
         str: Número de documento SAP, o "OK" si no se pudo extraer.
     """
-    SAP.tab(1)                  # salir del campo activo antes de guardar
+    SAP.tab(1)                     # saca el campo activo de edit mode; sin este tab SAP ignora el clic
     time.sleep(_SLEEP_CORTO)
     try:
         from pywinauto import Application
+        # "Registrar factura de acreedor" es el título completo en ventana maximizada
         _app = Application(backend="uia").connect(
             title_re=".*Registrar factura de acreedor.*", timeout=_TIMEOUT_PYWINAUTO
         )
         _win    = _app.window(title_re=".*Registrar factura de acreedor.*")
         _footer = _win.child_window(title="Footer", control_type="Pane")
+        # click_input() funciona; invoke() (UIA InvokePattern) NO dispara el guardado en SAP
         _btn    = _footer.child_window(title="Contabilizar", auto_id="4004", control_type="Button")
         _btn.click_input()
         _log.info("FB60 botón Contabilizar clickeado")
@@ -454,7 +511,7 @@ def _contabilizar(fecha_capturada: str) -> str:
         SAP.ctrl_s()
         _log.info("FB60 Ctrl+S enviado como fallback")
 
-    time.sleep(_SLEEP_POPUP)
+    time.sleep(_SLEEP_POPUP)       # espera fija: el popup Información tarda variable en aparecer
     _cerrado = False
     try:
         popup = _win.child_window(title_re=".*Informaci.*")
@@ -465,6 +522,7 @@ def _contabilizar(fecha_capturada: str) -> str:
     except Exception:
         pass
     if not _cerrado:
+        # Popup embebido en la ventana SAP — no detectable via EnumWindows; se cierra con Enter directo
         _log.info("Popup no encontrado via UIA — enviando Enters de cierre")
         for _ in range(3):
             SAP.enter()
@@ -491,12 +549,13 @@ def _cancelar(fecha_capturada: str) -> str:
     time.sleep(_SLEEP_LARGO)
     titulo = SAP.titulo_actual().lower()
     _log.info("_cancelar: título tras F12 = %r", titulo)
-    # Sí tiene foco por defecto en el popup de abandono — Enter directo (sin Tab)
+    # Algunos builds de SAP 800 muestran "ingresar factura" en lugar de "registrar factura"
     if _TITULO_FB60.lower() in titulo or _TITULO_FB60_ALT in titulo:
+        # Sí tiene foco por defecto en el popup — Enter directo (Tab movería el foco y confirmaría No)
         SAP.enter()
         time.sleep(_SLEEP_LARGO)
     if _TITULO_POPUP_ABA in SAP.titulo_actual().lower():
-        SAP.enter()
+        SAP.enter()                # popup secundario de abandono: mismo patrón
         time.sleep(_SLEEP_MEDIO)
     _log.info("_cancelar: título final = %r", SAP.titulo_actual())
     _log.info("FB60 cancelado (modo prueba) — Fecha: %s", fecha_capturada)
