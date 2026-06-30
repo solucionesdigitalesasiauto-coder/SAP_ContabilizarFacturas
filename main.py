@@ -666,7 +666,7 @@ def procesar_banco(banco: dict, fecha_desde: str, fecha_hasta: str, max_docs: in
 
     # Actualizar valores_bancos.json con datos del banco/período actual.
     # Tipo de Procesamiento se preserva del JSON existente — nunca se modifica.
-    _ruta_bancos = _pathlib.Path(__file__).parent / "transactions" / "valores_bancos.json"
+    _ruta_bancos = _pathlib.Path(_BASE) / "valores_bancos.json"
     try:
         _base = _json.loads(_ruta_bancos.read_text(encoding="utf-8")) if _ruta_bancos.exists() else {}
     except Exception:
@@ -682,7 +682,7 @@ def procesar_banco(banco: dict, fecha_desde: str, fecha_hasta: str, max_docs: in
 
     # Actualizar valores_fb60.json con campos contables del banco/período actual.
     # El resto de campos (Titulo, Clase doc, etc.) se preservan del JSON existente.
-    _ruta_fb60 = _pathlib.Path(__file__).parent / "transactions" / "valores_fb60.json"
+    _ruta_fb60 = _pathlib.Path(_BASE) / "valores_fb60.json"
     try:
         _base_fb60 = _json.loads(_ruta_fb60.read_text(encoding="utf-8")) if _ruta_fb60.exists() else {}
     except Exception:

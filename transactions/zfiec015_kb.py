@@ -90,7 +90,9 @@ def _get_session():
 
 def _validar_campos_zfiec(proveedor, fecha_desde, fecha_hasta, sociedad, tipo_doc):
     import json, pathlib
-    ruta = pathlib.Path(__file__).parent / "valores_bancos.json"
+    _base = pathlib.Path(sys.executable).parent if getattr(sys, 'frozen', False) \
+            else pathlib.Path(__file__).parent.parent
+    ruta = _base / "valores_bancos.json"
     if not ruta.exists():
         _log.warning("Validación ZFIEC015 omitida — valores_bancos.json no existe")
         return

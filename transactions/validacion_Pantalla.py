@@ -23,7 +23,8 @@ if getattr(sys, 'frozen', False):
 # CONFIGURACIÓN
 # ==========================================================
 
-_BASE_DIR = pathlib.Path(__file__).parent.parent
+_BASE_DIR = pathlib.Path(sys.executable).parent if getattr(sys, 'frozen', False) \
+            else pathlib.Path(__file__).parent.parent
 _SCREENSHOTS_DIR = _BASE_DIR / "screenshots"
 _SCREENSHOTS_DIR.mkdir(exist_ok=True)
 
@@ -770,7 +771,7 @@ def leer_valores_zfiec015():
         "Tipo de Procesamiento": extraer_tipo_procesamiento_zfiec(lineas),
     }
 
-    ruta_json = pathlib.Path(__file__).parent / "valores_bancos.json"
+    ruta_json = _BASE_DIR / "valores_bancos.json"
 
     with open(ruta_json, "w", encoding="utf-8") as f:
         json.dump(resultado, f, ensure_ascii=False, indent=4)
@@ -1495,7 +1496,7 @@ def prellenar_esperados_fb60():
         "Centro coste":    env.get("CENTRO_COSTO",          ""),
     }
 
-    ruta = pathlib.Path(__file__).parent / "valores_fb60.json"
+    ruta = _BASE_DIR / "valores_fb60.json"
 
     with open(ruta, "w", encoding="utf-8") as f:
         json.dump(esperados, f, ensure_ascii=False, indent=4)
@@ -1504,7 +1505,7 @@ def prellenar_esperados_fb60():
 
 
 def leer_y_validar_fb60():
-    ruta_base = pathlib.Path(__file__).parent / "valores_fb60.json"
+    ruta_base = _BASE_DIR / "valores_fb60.json"
 
     # Leer esperados (escritos por prellenar_esperados_fb60 antes de entrar a FB60)
     if ruta_base.exists():
