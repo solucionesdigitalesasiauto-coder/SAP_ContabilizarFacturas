@@ -706,7 +706,7 @@ def procesar_banco(banco: dict, fecha_desde: str, fecha_hasta: str, max_docs: in
     except Exception:
         _base_fb60 = {}
     _base_fb60.update({
-        "Combo B2":     _os.getenv("INDICADOR_IMPUESTO", "B2"),
+        "Combo B2":     os.getenv("INDICADOR_IMPUESTO", "B2"),
         "Cta.mayor":    banco["cuenta_mayor"],
         "Centro coste": banco["centro_costo"],
         "Texto":        banco["texto_comision"],
