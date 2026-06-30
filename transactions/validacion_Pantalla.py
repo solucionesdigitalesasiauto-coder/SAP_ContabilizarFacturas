@@ -1481,29 +1481,6 @@ def validar_campos_fb60(valores):
     return errores
 
 
-def prellenar_esperados_fb60():
-    env = leer_env_simple(_BASE_DIR / ".env")
-
-    esperados = {
-        "Titulo":          env.get("FB60_TITULO",           "Registrar factura de acreedor"),
-        "Clase documento": env.get("FB60_CLASE_DOCUMENTO",  "Factura acreedor"),
-        "Fecha factura":   None,
-        "Fecha contab.":   None,
-        "Calc.impuestos":  True,
-        "Combo B2":        env.get("FB60_COMBO_B2",         env.get("INDICADOR_IMPUESTO", "B2")),
-        "Cta.mayor":       env.get("CUENTA_MAYOR",          ""),
-        "Texto":           env.get("FB60_TEXTO",            ""),
-        "Centro coste":    env.get("CENTRO_COSTO",          ""),
-    }
-
-    ruta = _BASE_DIR / "valores_fb60.json"
-
-    with open(ruta, "w", encoding="utf-8") as f:
-        json.dump(esperados, f, ensure_ascii=False, indent=4)
-
-    return esperados
-
-
 def leer_y_validar_fb60():
     ruta_base = _BASE_DIR / "valores_fb60.json"
 

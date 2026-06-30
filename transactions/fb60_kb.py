@@ -140,7 +140,7 @@ def registrar_factura(banco: dict) -> dict:
 
     Ejecuta en secuencia todos los pasos de llenado:
     fecha, impuestos, posición contable, pestaña Pago, pestaña Detalle
-    y finalmente contabiliza o cancela según CONTABILIZAR en .env.
+    y finalmente contabiliza. La validación OCR controla si el doc está correcto.
 
     Args:
         banco (dict): Configuración del banco con las claves:
@@ -418,20 +418,8 @@ def _llenar_pestana_detalle(texto_cab: str) -> None:
     time.sleep(_SLEEP_CORTO)
 
 def _contabilizar_o_cancelar(fecha_capturada: str) -> str:
-    """Despacha a modo real o prueba según variable de entorno CONTABILIZAR.
-
-    Lee os.getenv("CONTABILIZAR", "0"): "1" → contabilizar, otro → cancelar.
-
-    Args:
-        fecha_capturada (str): Fecha de factura para incluir en el log.
-
-    Returns:
-        str: "OK" si se contabilizó, "PRUEBA" si se canceló.
-    """
     SAP.activar()
-    if os.getenv("CONTABILIZAR", "0") == "1":
-        return _contabilizar(fecha_capturada)
-    return _cancelar(fecha_capturada)
+    return _contabilizar(fecha_capturada)
 
 
 def _contabilizar(fecha_capturada: str) -> str:

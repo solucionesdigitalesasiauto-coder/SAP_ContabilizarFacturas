@@ -907,14 +907,6 @@ def main():
     5. Enviar notificaciones por correo (resumen o error).
     6. Imprimir resumen final y cerrar SAP.
 
-    Returns:
-        None
-
-    Hardcoded:
-        - "START_FROM_BANCO": variable de entorno para saltar bancos (STRING)
-        - "MAX_DOCS_BANCO", "CONTABILIZAR": variables de control (STRING)
-        - "orden", 99: clave y default de orden de procesamiento (STRING / NÚMERO MÁGICO)
-        - "═" * 56: bordes del banner de inicio (ESTILO)
     """
     print("╔══════════════════════════════════════════════════════╗")
     print("║   SAP Automatización – Comisiones Bancarias          ║")
@@ -932,16 +924,6 @@ def main():
         print("  No hay bancos con proveedor configurado en bancos.json")
         sys.exit(1)
 
-    start_from = os.getenv("START_FROM_BANCO", "").strip().upper()
-    if start_from:
-        idx = next((i for i, b in enumerate(bancos_a_procesar)
-                    if b["nombre"].upper() == start_from), None)
-        if idx is None:
-            print(f"  [!] START_FROM_BANCO='{start_from}' no encontrado en bancos.json — se ignora.")
-        else:
-            bancos_a_procesar = bancos_a_procesar[idx:]
-            print(f"  Iniciando desde: {start_from}")
-
     fecha_desde, fecha_hasta = fechas_mes_actual()
 
     print(f"\n  Bancos  : {', '.join(b['nombre'] for b in bancos_a_procesar)}")
@@ -949,9 +931,6 @@ def main():
     print()
 
     max_docs = None   # siempre procesa todos los documentos
-    _modo = "REAL (contabiliza)" if os.getenv("CONTABILIZAR", "0") == "1" else "PRUEBA (sin guardar)"
-    print(f"  Docs/banco : Todos  |  Modo: {_modo}")
-    print()
 
     try:
         from correos.notificador_sap import NotificadorSAP
