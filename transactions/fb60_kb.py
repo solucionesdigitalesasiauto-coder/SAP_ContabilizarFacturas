@@ -14,7 +14,6 @@ _kbd = _KbCtrl()
 class ValidacionFB60Error(RuntimeError):
     """Validación OCR fallida en FB60 — el doc se cancela y se salta al siguiente."""
 
-# ── Tab-counts calibrados con Au3Info (17-18/06/2026) ────────
 _TAB_FECHA_FACTURA  = 2   # desde Acreedor
 _TAB_FECHA_CONTAB   = 2   # desde Fecha Factura
 _TAB_CALC_IMP       = 5   # desde Acreedor (total acumulado)
@@ -23,20 +22,17 @@ _TAB_POS_IMPORTE    = 2   # dentro de la tabla de posiciones
 _TAB_POS_TEXTO      = 6
 _TAB_POS_CCOSTO     = 5
 
-# ── Timings (ajustar si SAP responde más lento) ───────────────
 _SLEEP_MICRO = 0.1   # micro-pausa interna (retry clipboard, pre-paste)
 _SLEEP_CORTO = 0.3   # entre campos / teclas
 _SLEEP_MEDIO = 0.6   # entre pasos SAP
 _SLEEP_LARGO = 0.9   # tabla / salidas lentas
 _SLEEP_POPUP = 2.0   # espera popup Información tras Contabilizar
 
-# ── Constantes de reintentos y timeouts pywinauto ─────────────
 _MAX_REINTENTOS_CLIP  = 5    # reintentos de verificación del portapapeles
 _TIMEOUT_PYWINAUTO    = 5    # timeout pywinauto connect a ventana FB60
 _TIMEOUT_POPUP_UIA    = 1.0  # timeout exists() del popup Información
 _TIMEOUT_POPUP_ABANDON = 2.0 # timeout detectar popup de abandono F12
 
-# ── Títulos y strings SAP ─────────────────────────────────────
 _TITULO_FB60      = "Registrar factura"   # título de ventana FB60
 _TITULO_FB60_ALT  = "ingresar factura"    # título alternativo FB60
 _TITULO_POPUP_ABA = "tratamiento"         # popup de abandono al F12
@@ -53,13 +49,6 @@ def _pegar(valor: str) -> None:
     Args:
         valor (str): Texto a pegar en el campo activo.
 
-    Returns:
-        None
-
-    Hardcoded:
-        - _MAX_REINTENTOS_CLIP: reintentos de verificación del portapapeles
-        - _SLEEP_MICRO: pausa entre reintentos y antes de Ctrl+V
-        - _SLEEP_CORTO: pausa tras Ctrl+V
     """
     texto = str(valor)
     pyperclip.copy(texto)
@@ -216,10 +205,6 @@ def registrar_factura(banco: dict) -> dict:
     t = _t(f"pestana_detalle ← {texto_cab!r}", t)
     time.sleep(_SLEEP_CORTO)
 
-    # Volver a Datos básicos para que doc 2+ abra con cursor en Acreedor
-    SAP.pestana_anterior()
-    SAP.pestana_anterior()
-
     nro = _contabilizar_o_cancelar(fecha_capturada)
     _t(f"contabilizar → {nro!r}", t)
     return {
@@ -229,8 +214,6 @@ def registrar_factura(banco: dict) -> dict:
         "centro_costo": centro_costo,
     }
 
-
-# ── Pasos internos ────────────────────────────────────────────
 
 def _copiar_fecha_factura() -> str:
     """Copia la Fecha Factura del encabezado FB60 al portapapeles.
@@ -347,11 +330,6 @@ def _llenar_resto_tabla(texto_com: str, centro_costo: str) -> None:
         texto_com (str): Texto de la posición (ej. "comision banco del austro").
         centro_costo (str): Centro de costo a asignar.
 
-    Returns:
-        None
-
-    Hardcoded:
-        - _IMPORTE_AUTO = "*"  (STRING — indica a SAP que calcule el total)
     """
     SAP.tab(_TAB_POS_IMPORTE)
     time.sleep(_SLEEP_MEDIO)
@@ -471,7 +449,6 @@ def _contabilizar(fecha_capturada: str) -> str:
     Returns:
         str: Número de documento SAP, o "OK" si no se pudo extraer.
     """
-    # ── PASO 1: guardar ───────────────────────────────────────────
     SAP.tab(1)                  # salir del campo activo antes de guardar
     time.sleep(_SLEEP_CORTO)
     try:
@@ -489,8 +466,6 @@ def _contabilizar(fecha_capturada: str) -> str:
         SAP.ctrl_s()
         _log.info("FB60 Ctrl+S enviado como fallback")
 
-    # ── PASO 2: cerrar popup Información (embebido en FB60) ──────────
-    # Intenta via pywinauto (child sin filtro de control_type), fallback Enters
     time.sleep(_SLEEP_POPUP)
     _cerrado = False
     try:
@@ -523,11 +498,6 @@ def _cancelar(fecha_capturada: str) -> str:
 
     Returns:
         str: "PRUEBA"
-
-    Hardcoded:
-        - _TITULO_FB60    = "Registrar factura"  (STRING — título ventana FB60)
-        - _TITULO_FB60_ALT = "ingresar factura"  (STRING — título alternativo)
-        - _TITULO_POPUP_ABA = "tratamiento"      (STRING — popup de abandono SAP)
     """
     SAP.f12()
     time.sleep(_SLEEP_LARGO)
