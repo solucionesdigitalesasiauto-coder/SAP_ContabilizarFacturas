@@ -133,7 +133,9 @@ def _validar_campos_zfiec(proveedor, fecha_desde, fecha_hasta, sociedad, tipo_do
         msg = "Validación ZFIEC015 fallida:\n  " + "\n  ".join(diferencias)
         _log.error(msg)
         raise RuntimeError(msg)
-    _log.info("Validación ZFIEC015 OK.")
+    _log.info("Validación OCR ZFIEC015 OK. Valores detectados:")
+    for k, v in detectados.items():
+        _log.info("  OCR %-35s %s", k, repr(v) if v is not None else "N/D")
     print("  ✓ Validación ZFIEC015 OK")
 
 
