@@ -1,15 +1,26 @@
 # -*- mode: python ; coding: utf-8 -*-
+import glob as _glob
+import os as _os
+
+_TESS = r'C:\Program Files\Tesseract-OCR'
+_tess_bins = [
+    (f, '.') for f in _glob.glob(_os.path.join(_TESS, '*.dll'))
+] + [(f, '.') for f in _glob.glob(_os.path.join(_TESS, 'tesseract.exe'))]
+_tess_data = [
+    (f, 'tessdata') for f in _glob.glob(_os.path.join(_TESS, 'tessdata', '*.traineddata'))
+]
 
 a = Analysis(
     ['../main.py'],
     pathex=['..', '../diagnostico'],
-    binaries=[],
-    datas=[
+    binaries=_tess_bins,
+    datas=_tess_data + [
         ('../bancos.json',                   '.'),
         ('../sap_gui.py',                    '.'),
         ('../transactions/__init__.py',      'transactions'),
         ('../transactions/zfiec015_kb.py',   'transactions'),
         ('../transactions/fb60_kb.py',       'transactions'),
+        ('../transactions/validacion_Pantalla.py', 'transactions'),
         ('../correos/__init__.py',           'correos'),
         ('../correos/notificador_sap.py',    'correos'),
         ('../correos/outlook_notifier.py',   'correos'),
@@ -37,6 +48,11 @@ a = Analysis(
         'pywinauto.base_wrapper',
         'pywinauto.uia_defines',
         'pywinauto.uia_element_info',
+        'PIL',
+        'PIL.ImageGrab',
+        'PIL.ImageOps',
+        'PIL.ImageEnhance',
+        'pytesseract',
     ],
     hookspath=[],
     hooksconfig={},

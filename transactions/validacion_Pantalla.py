@@ -15,6 +15,9 @@ _log = logging.getLogger(__name__)
 from PIL import ImageGrab, ImageOps, ImageEnhance
 import pytesseract
 
+if getattr(sys, 'frozen', False):
+    pytesseract.pytesseract.tesseract_cmd = os.path.join(sys._MEIPASS, 'tesseract.exe')
+
 
 # ==========================================================
 # CONFIGURACIÓN
