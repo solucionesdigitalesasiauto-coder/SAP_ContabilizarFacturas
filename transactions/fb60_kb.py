@@ -139,7 +139,10 @@ def _validar_pantalla_fb60() -> None:
         time.sleep(_SLEEP_LARGO)
         _confirmar_abandon_fb60()
         raise ValidacionFB60Error(msg)
-    _log.info("Validación OCR FB60 OK.")
+    detectados = resultado.get("detectados", {})
+    _log.info("Validación OCR FB60 OK. Valores detectados:")
+    for k, v in detectados.items():
+        _log.info("  OCR %-25s %r", k, v)
     print("  ✓ Validación FB60 OK")
 
 
@@ -199,7 +202,7 @@ def registrar_factura(banco: dict) -> dict:
     t = _t(f"indicador_impuesto ← {ind_impuesto!r}", t)
     time.sleep(_SLEEP_CORTO)
     _posicion_normal(cuenta_mayor, texto_com, centro_costo)
-    t = _t(f"posicion_normal ← cta={cuenta_mayor!r} cc={centro_costo!r}", t)
+    t = _t(f"posicion_normal ← cta={cuenta_mayor!r} imp={_IMPORTE_AUTO!r} txt={texto_com!r} cc={centro_costo!r}", t)
     time.sleep(_SLEEP_CORTO)
     _salir_tabla_y_limpiar_advertencia()
     t = _t("salir_tabla ✓", t)

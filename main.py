@@ -688,8 +688,8 @@ def procesar_banco(banco: dict, fecha_desde: str, fecha_hasta: str, max_docs: in
     except Exception:
         _base_fb60 = {}
     _base_fb60.update({
-        "Cta.mayor":    os.getenv("CUENTA_MAYOR", ""),
-        "Centro coste": os.getenv("CENTRO_COSTO", ""),
+        "Cta.mayor":    banco["cuenta_mayor"],
+        "Centro coste": banco["centro_costo"],
     })
     _ruta_fb60.write_text(_json.dumps(_base_fb60, ensure_ascii=False, indent=4), encoding="utf-8")
 
