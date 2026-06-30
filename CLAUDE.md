@@ -35,9 +35,9 @@ SAP/
 ├── main.py                     # ★ PUNTO DE ENTRADA — menú interactivo multi-banco
 ├── sap_gui.py                  # Motor de automatización (teclado/mouse: pynput + pyautogui)
 ├── coordenadas.py              # Tab-counts calibrados con Au3Info (17-18/06/2026)
-├── bancos.json                 # Configuración de los 5 bancos (nombre, proveedor, textos)
+├── bancos.json                 # Configuración de los 7 bancos (nombre, proveedor, cuenta_mayor, textos)
 ├── .env                        # Credenciales y parámetros (NO subir a repositorio)
-├── requirements.txt            # pywin32, python-dotenv, pyautogui, pyperclip, pynput
+├── requirements.txt            # pywin32, python-dotenv, pyautogui, pyperclip, pynput, pywinauto, pillow, pytesseract
 ├── VERSION                     # Número de versión actual
 ├── correos/
 │   ├── outlook_notifier.py     # Envío de correo (Microsoft Graph API / OAuth2)
@@ -45,26 +45,31 @@ SAP/
 │   └── DOCS_ENVIO_CORREO.md    # Documentación del módulo de correo
 ├── transactions/
 │   ├── zfiec015_kb.py          # ZFIEC015: llenar formulario + iterar grilla
-│   └── fb60_kb.py              # FB60: registrar factura (modo prueba o real, ver .env)
+│   ├── fb60_kb.py              # FB60: registrar factura (modo prueba o real, ver .env)
+│   └── validacion_Pantalla.py  # OCR via Tesseract: valida pantallas ZFIEC015 y FB60 antes de ejecutar
 ├── diagnostico/
 │   └── campos.py               # IDs de elementos SAP para scripting (importado por zfiec015_kb)
 └── release/
     ├── build_release.bat       # ★ Script para generar el ejecutable .exe
     ├── build.py                # Lógica de build con PyInstaller
-    └── combancos.spec          # Spec file de PyInstaller
+    └── combancos.spec          # Spec file de PyInstaller (incluye Tesseract OCR auto-contenido)
 ```
 
 ---
 
 ## Bancos configurados (`bancos.json`)
 
-| Banco | Proveedor SAP | Txt.cabec | Texto comisión |
-|-------|--------------|-----------|----------------|
-| Austro | 1000004754 | BANCO DEL AUSTRO | comision banco del austro |
-| Pacifico | *(pendiente)* | BANCO DEL PACIFICO | comision banco del pacifico |
-| Diners | *(pendiente)* | BANCO DINERS | comision banco diners |
-| Internacional | *(pendiente)* | BANCO INTERNACIONAL | comision banco internacional |
-| Guayaquil | *(pendiente)* | BANCO DE GUAYAQUIL | comision banco de guayaquil |
+| Orden | Banco | Proveedor SAP | Cta.mayor GL | Txt.cabec | Texto comisión |
+|-------|-------|--------------|--------------|-----------|----------------|
+| 1 | Austro | 1000004754 | 8110200002 | BANCO DEL AUSTRO | COMISION BANCO AUSTRO |
+| 2 | Guayaquil | 1000001661 | 8110200007 | BANCO DE GUAYAQUIL | COMISION BANCO GUAYAQUIL |
+| 3 | Pacifico | 1000006932 | 8110200003 | BANCO DEL PACIFICO | COMISION BANCO PACIFICO |
+| 4 | Pichincha | 1000004511 | 8110200004 | BANCO PICHINCHA | COMISION BANCO PICHINCHA |
+| 5 | Diners | 1000004516 | 8110200021 | BANCO DINERS | COMISION BANCO DINERS |
+| 6 | Bolivariano | 1000083356 | 8110200008 | BANCO BOLIVARIANO | COMISION BANCO BOLIVARIANO |
+| 7 | Internacional | 1000023397 | 8110200009 | BANCO INTERNACIONAL | COMISION BANCO INTERNACIONAL |
+
+Cada banco tiene su propia `cuenta_mayor` GL — se lee desde `bancos.json`, **no** desde `.env`.
 
 ---
 
@@ -77,8 +82,8 @@ SAP/
 | SAP_MANDANTE | 600 | Mandante en pantalla de login |
 | SAP_IDIOMA | ES | Idioma |
 | SAP_SOCIEDAD | 2000 | Campo Sociedad en ZFIEC015 |
-| CENTRO_COSTO | 2047001103 | Posición FB60 — columna Cen |
-| CUENTA_MAYOR | 8110200002 | Posición FB60 — Cta.mayor |
+| CENTRO_COSTO | 2047001103 | Fallback centro costo (cada banco lo define en `bancos.json`) |
+| CUENTA_MAYOR | *(ya no se usa)* | Reemplazado por `cuenta_mayor` en `bancos.json` por banco |
 | VIA_PAGO | T | Pestaña Pago — Vía pago |
 | INDICADOR_IMPUESTO | B2 | IVA Compras 15% Crédito |
 | TIPO_DOC_ZFIEC | 01 | Tipo de Documento en ZFIEC015 |
@@ -244,7 +249,7 @@ Aparece después de mostrar bancos y período, antes de abrir SAP. Permite elegi
 
 ---
 
-## Estado actual (29/06/2026) — `v1.0.1` (tag git: primera versión liberada a producción)
+## Estado actual (30/06/2026) — `v1.0.1` (tag git actualizado)
 
 - Flujo end-to-end funcional y verificado en **producción**: login → ZFIEC015 → FB60 (todos los campos) → contabilización real (pywinauto click_input + Enter) → múltiples documentos y múltiples bancos
 - Todo teclado SAP via **pynput** excepto Ctrl+/ (único en pyautogui). pywinauto para botón Contabilizar.
@@ -253,13 +258,20 @@ Aparece después de mostrar bancos y período, antes de abrir SAP. Permite elegi
 - Todos los sleeps y timeouts en bloques `_SLEEP_*` / `_TIMEOUT_*` al inicio de cada archivo — sin magic numbers en funciones
 - `_MAX_INTENTOS_POPUP=3` en zfiec015_kb para retry del popup HTML de ZFIEC015
 - `_TIMEOUT_POPUP_CONFIRM=2.0s` en zfiec015_kb — detecta popup por pantalla via pywinauto antes del Enter fallback
-- `combancos.spec`: pywinauto agregado a hiddenimports para build correcto
 - Errores por banco: loguean con `exc_info=True`, envían correo y continúan (`continue`, no `break`)
 - SAP se cierra automáticamente al final (`cerrar_sap()` con `/nend`)
 - Menú interactivo al inicio para elegir cantidad de docs y modo (prueba/real) sin editar .env
 - `_posicion_normal` funciona para primer Y subsecuentes ingresos FB60 (verificado en producción)
 - `_llenar_pestana_detalle()` regresa a Datos básicos con 2× `pestana_anterior()` — doc 2+ abre con cursor en Acreedor
 - `_llenar_resto_tabla()`: pre-sleep `_SLEEP_MEDIO` antes de `activar()` en los tres campos (fix máquina rápida: Ctrl+V llega con foco asentado)
+
+### Cambios 30/06/2026
+
+- **Fix multi-banco**: `cuenta_mayor` GL se lee de `bancos.json` por banco — antes tomaba `CUENTA_MAYOR` del `.env` (valor fijo de Austro) para todos los bancos
+- **Log OCR detallado**: `posicion_normal` loguea `imp=` y `txt=`; validación FB60 OK imprime todos los valores detectados campo a campo
+- **Validación OCR**: `validacion_Pantalla.py` incluido en el build — antes faltaba en el spec y se omitía silenciosamente
+- **Build auto-contenido**: Tesseract OCR (exe + DLLs + tessdata) empaquetado en `ComBancos.exe` — segunda máquina no necesita instalar nada
+- **Paths de runtime correctos en .exe**: logs, screenshots, `valores_bancos.json` y `valores_fb60.json` se crean junto al `.exe` (antes iban a `sys._MEIPASS`, carpeta temporal que desaparece al cerrar)
 
 ---
 
