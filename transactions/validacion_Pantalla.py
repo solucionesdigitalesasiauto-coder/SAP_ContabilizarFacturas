@@ -20,12 +20,6 @@ _log = logging.getLogger(__name__)
 # CONFIGURACIÓN BASE
 # ============================================================
 
-if getattr(sys, "frozen", False):
-    pytesseract.pytesseract.tesseract_cmd = os.path.join(
-        sys._MEIPASS,
-        "tesseract.exe"
-    )
-
 _BASE_DIR = (
     pathlib.Path(sys.executable).parent
     if getattr(sys, "frozen", False)
@@ -69,18 +63,17 @@ def buscar_tesseract():
     return None
 
 
-tesseract_path = buscar_tesseract()
-
-if not tesseract_path:
-    print("ERROR: No se encontró tesseract.exe")
-    sys.exit(1)
-
-pytesseract.pytesseract.tesseract_cmd = tesseract_path
-
-os.environ["TESSDATA_PREFIX"] = os.path.join(
-    os.path.dirname(tesseract_path),
-    "tessdata"
-)
+if getattr(sys, "frozen", False):
+    # Exe auto-contenido: Tesseract embebido en sys._MEIPASS — no buscar instalación del sistema
+    pytesseract.pytesseract.tesseract_cmd = os.path.join(sys._MEIPASS, "tesseract.exe")
+    os.environ["TESSDATA_PREFIX"] = os.path.join(sys._MEIPASS, "tessdata")
+else:
+    tesseract_path = buscar_tesseract()
+    if not tesseract_path:
+        print("ERROR: No se encontró tesseract.exe")
+        sys.exit(1)
+    pytesseract.pytesseract.tesseract_cmd = tesseract_path
+    os.environ["TESSDATA_PREFIX"] = os.path.join(os.path.dirname(tesseract_path), "tessdata")
 
 
 # ============================================================
