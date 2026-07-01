@@ -64,9 +64,15 @@ def buscar_tesseract():
 
 
 if getattr(sys, "frozen", False):
-    # Exe auto-contenido: Tesseract embebido en sys._MEIPASS — no buscar instalación del sistema
-    pytesseract.pytesseract.tesseract_cmd = os.path.join(sys._MEIPASS, "tesseract.exe")
-    os.environ["TESSDATA_PREFIX"] = os.path.join(sys._MEIPASS, "tessdata")
+    _tess_sistema = buscar_tesseract()
+    if _tess_sistema:
+        # Tesseract ya instalado en el sistema — lo usa directamente
+        pytesseract.pytesseract.tesseract_cmd = _tess_sistema
+        os.environ["TESSDATA_PREFIX"] = os.path.join(os.path.dirname(_tess_sistema), "tessdata")
+    else:
+        # Sin instalación del sistema — usa el Tesseract embebido en el exe
+        pytesseract.pytesseract.tesseract_cmd = os.path.join(sys._MEIPASS, "tesseract.exe")
+        os.environ["TESSDATA_PREFIX"] = os.path.join(sys._MEIPASS, "tessdata")
 else:
     tesseract_path = buscar_tesseract()
     if not tesseract_path:
