@@ -185,12 +185,14 @@ def _verificar_foco_acreedor(banco: dict) -> None:
     _log.info("Foco Acreedor — campo activo: %r  esperado: %r", valor_actual, proveedor_esp)
     if valor_actual == proveedor_esp:
         return
-    # Foco perdido — salir de FB60 para que el loop reintente desde ZFIEC015
+    # Foco perdido — recuperar ventana antes de F12; sin esto F12 no llega a SAP
     _log.warning("FOCO PERDIDO al inicio FB60: campo=%r  proveedor=%r", valor_actual, proveedor_esp)
-    print(f"  [!] Foco perdido en FB60 (campo={valor_actual!r}) — cancelando para reintentar")
-    SAP.activar(_TITULO_FB60)
-    time.sleep(_SLEEP_CORTO)
-    SAP.f12()
+    print(f"  [!] Foco perdido en FB60 (campo={valor_actual!r}) — recuperando ventana...")
+    SAP.posicionar_ventana()       # restaura posición en pantalla (minimizada/tapada)
+    time.sleep(_SLEEP_MEDIO)
+    SAP.activar(_TITULO_FB60)      # trae al frente y da foco real
+    time.sleep(_SLEEP_MEDIO)
+    SAP.f12()                      # ahora sí llega a SAP
     time.sleep(_SLEEP_LARGO)
     _confirmar_abandon_fb60()
     raise ValidacionFB60Error(
@@ -269,6 +271,9 @@ def registrar_factura(banco: dict) -> dict:
     t = _t("salir_tabla ✓", t)
     time.sleep(_SLEEP_CORTO)
 
+    # Verificar foco en campo Acreedor antes de iniciar el llenado
+    _verificar_foco_acreedor(banco)
+    
     # Validación OCR — Datos básicos completos antes de cambiar de pestaña
     _validar_pantalla_fb60()
     t = _t("validacion_ocr ✓", t)
