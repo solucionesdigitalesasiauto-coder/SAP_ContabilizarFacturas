@@ -114,6 +114,32 @@ def _confirmar_abandon_fb60(timeout: float = _TIMEOUT_POPUP_ABANDON) -> bool:
     return False
 
 
+def _cerrar_fb60_forzado(max_intentos: int = 3) -> bool:
+    """Cierra FB60 con F12, reintentando si quedan diálogos bloqueantes.
+
+    Tras cada F12+confirm verifica el título. Si FB60 sigue abierto, envía
+    Enter para desbloquear el diálogo y reintenta F12.
+
+    Returns:
+        bool: True si logró salir de FB60, False si agotó los intentos.
+    """
+    for intento in range(1, max_intentos + 1):
+        SAP.activar(_TITULO_FB60)
+        time.sleep(_SLEEP_MEDIO)
+        SAP.f12()
+        time.sleep(_SLEEP_LARGO)
+        _confirmar_abandon_fb60()
+        time.sleep(_SLEEP_MEDIO)
+        if _TITULO_FB60.lower() not in SAP.titulo_actual().lower():
+            _log.info("FB60 cerrado en intento %d", intento)
+            return True
+        _log.warning("FB60 sigue abierto tras intento %d — Enter para desbloquear diálogo", intento)
+        SAP.enter()
+        time.sleep(_SLEEP_MEDIO)
+    _log.error("No se pudo cerrar FB60 tras %d intentos", max_intentos)
+    return False
+
+
 def _validar_pantalla_fb60() -> None:
     """Valida por OCR los campos de Datos básicos FB60 antes de cambiar de pestaña.
 
@@ -133,11 +159,8 @@ def _validar_pantalla_fb60() -> None:
         difs = resultado["diferencias"]
         msg = "Validación FB60 fallida:\n  " + "\n  ".join(f"{k}: {v}" for k, v in difs.items())
         _log.error(msg)
-        SAP.activar(_TITULO_FB60)   # restaura foco: las screenshots OCR pueden haberlo quitado
-        SAP.f12()
-        time.sleep(_SLEEP_LARGO)
-        _confirmar_abandon_fb60()
-        raise ValidacionFB60Error(msg)   # capturado en zfiec015_kb para continuar con siguiente doc
+        _cerrar_fb60_forzado()
+        raise ValidacionFB60Error(msg)
     detectados = resultado.get("detectados", {})
     _log.info("Validación OCR FB60 OK. Valores detectados:")
     for k, v in detectados.items():
@@ -158,11 +181,8 @@ def _validar_pantalla_detalle_fb60() -> None:
         difs = resultado["diferencias"]
         msg = "Validación FB60 Detalle fallida:\n  " + "\n  ".join(f"{k}: {v}" for k, v in difs.items())
         _log.error(msg)
-        SAP.activar(_TITULO_FB60)   # restaura foco antes de cancelar
-        SAP.f12()
-        time.sleep(_SLEEP_LARGO)
-        _confirmar_abandon_fb60()
-        raise ValidacionFB60Error(msg)   # capturado en zfiec015_kb para continuar con siguiente doc
+        _cerrar_fb60_forzado()
+        raise ValidacionFB60Error(msg)
     detectados = resultado.get("detectados", {})
     _log.info("Validación OCR FB60 Detalle OK. Valores detectados:")
     for k, v in detectados.items():
@@ -189,23 +209,7 @@ def _verificar_foco_acreedor(banco: dict) -> None:
     print(f"  [!] Foco perdido en FB60 (campo={valor_actual!r}) — recuperando ventana...")
     SAP.posicionar_ventana()       # restaura posición en pantalla (minimizada/tapada)
     time.sleep(_SLEEP_MEDIO)
-    SAP.activar(_TITULO_FB60)      # trae al frente y da foco real
-    time.sleep(_SLEEP_MEDIO)
-    SAP.f12()                      # ahora sí llega a SAP
-    time.sleep(_SLEEP_LARGO)
-    _confirmar_abandon_fb60()
-    time.sleep(_SLEEP_MEDIO)
-    # Si FB60 sigue abierto, el F12 fue bloqueado por una alerta SAP —
-    # la alerta ya fue cerrada por _confirmar_abandon_fb60; reintentar F12 ahora
-    if _TITULO_FB60.lower() in SAP.titulo_actual().lower():
-        _log.warning("FB60 sigue abierto tras F12 — alerta bloqueante; reintentando cierre...")
-        print("  [!] FB60 no cerró (alerta bloqueante) — reintentando F12...")
-        SAP.activar(_TITULO_FB60)
-        time.sleep(_SLEEP_MEDIO)
-        SAP.f12()
-        time.sleep(_SLEEP_LARGO)
-        _confirmar_abandon_fb60()
-        time.sleep(_SLEEP_MEDIO)
+    _cerrar_fb60_forzado()
     raise ValidacionFB60Error(
         f"Foco perdido al inicio: campo activo={valor_actual!r} ≠ Acreedor={proveedor_esp!r}"
     )

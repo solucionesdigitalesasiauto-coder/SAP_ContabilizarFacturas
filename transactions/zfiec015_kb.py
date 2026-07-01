@@ -372,16 +372,11 @@ def procesar_documentos(banco: dict, max_docs: int = None, **_):
             errores.append({"doc": f"doc_{n}", "error": str(e)})
             time.sleep(_SLEEP_CARGA)
             # Verificar que FB60 cerró; si sigue abierto forzar cierre antes de volver al grid
-            titulo_actual = SAP.titulo_actual()
-            if _TITULO_FB60.lower() in titulo_actual.lower():
+            if _TITULO_FB60.lower() in SAP.titulo_actual().lower():
                 _log.warning("FB60 sigue abierto tras ValidacionFB60Error — forzando cierre")
                 print("  [!] FB60 no cerró — forzando salida antes de continuar...")
-                from transactions.fb60_kb import _confirmar_abandon_fb60
-                SAP.activar(_TITULO_FB60)
-                time.sleep(_SLEEP_MEDIO)
-                SAP.f12()
-                time.sleep(_SLEEP_LARGO)
-                _confirmar_abandon_fb60()
+                from transactions.fb60_kb import _cerrar_fb60_forzado
+                _cerrar_fb60_forzado()
                 time.sleep(_SLEEP_CARGA)
             if not _abrir_fb60_teclado(0):
                 break
