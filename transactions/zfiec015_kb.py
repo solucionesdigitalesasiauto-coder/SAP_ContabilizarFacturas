@@ -18,8 +18,7 @@ _TAB_TIPO_DOC    = 5
 _kbd = _KbCtrl()
 
 # ── Timings (ajustar si SAP responde más lento) ───────────────
-_SLEEP_CORTO      = 0.3   # entre teclas en formulario
-_SLEEP_MEDIO      = 0.6   # entre pasos
+_SLEEP_MEDIO      = 0.6   # entre pasos / teclas en formulario
 _SLEEP_LARGO      = 1.5   # pausa larga (F2, Home, Right en grilla)
 _SLEEP_POPUP      = 2.5   # espera popup HTML de confirmación
 _SLEEP_CARGA      = 2.5   # espera carga de resultados F8
@@ -289,35 +288,35 @@ def _llenar_form_teclado(sociedad, proveedor, fecha_desde, fecha_hasta, tipo_doc
         - _TITULO_ZFIEC_ES: título con tilde para activar ventana (STRING)
     """
     SAP.activar(_TITULO_ZFIEC_ES)
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
     SAP.campo_ctrlA(sociedad)
     SAP.activar()
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
 
     SAP.tab(_TAB_PROVEEDOR)
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
     SAP.escribir(proveedor)
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
 
     SAP.activar()
     SAP.tecla('down')
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
     SAP.tecla('down')
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
     SAP.tecla('down')
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
     SAP.escribir(fecha_desde)
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
 
     SAP.tab(_TAB_FECHA_HASTA)
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
     SAP.escribir(fecha_hasta)
     time.sleep(_SLEEP_MEDIO)
 
     SAP.tab(_TAB_TIPO_DOC)
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
     SAP.escribir(tipo_doc)
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
 
     _log.debug("ZFIEC015 campos llenados via teclado.")
 
@@ -371,7 +370,19 @@ def procesar_documentos(banco: dict, max_docs: int = None, **_):
             _log.warning("Validación FB60 fallida doc_%d — saltando al siguiente: %s", n, e)
             print(f"    ↺ doc_{n}: validación OCR fallida — siguiente documento")
             errores.append({"doc": f"doc_{n}", "error": str(e)})
-            time.sleep(_SLEEP_CARGA)   # esperar que SAP regrese a grilla ZFIEC015
+            time.sleep(_SLEEP_CARGA)
+            # Verificar que FB60 cerró; si sigue abierto forzar cierre antes de volver al grid
+            titulo_actual = SAP.titulo_actual()
+            if _TITULO_FB60.lower() in titulo_actual.lower():
+                _log.warning("FB60 sigue abierto tras ValidacionFB60Error — forzando cierre")
+                print("  [!] FB60 no cerró — forzando salida antes de continuar...")
+                from transactions.fb60_kb import _confirmar_abandon_fb60
+                SAP.activar(_TITULO_FB60)
+                time.sleep(_SLEEP_MEDIO)
+                SAP.f12()
+                time.sleep(_SLEEP_LARGO)
+                _confirmar_abandon_fb60()
+                time.sleep(_SLEEP_CARGA)
             if not _abrir_fb60_teclado(0):
                 break
             continue
@@ -501,7 +512,7 @@ def _esperar_y_confirmar_popup(timeout: float = _TIMEOUT_POPUP_CONFIRM) -> bool:
             win  = app.window(title_re=".*Recepci.*documentos.*")
             pane = win.child_window(title="FB60", control_type="Pane")
             if not pane.exists(timeout=_TIMEOUT_PANE_EXISTS):
-                time.sleep(_SLEEP_CORTO)
+                time.sleep(_SLEEP_MEDIO)
                 continue
 
             _log.info("Popup confirmación FB60 detectado (%.1fs) — buscando botón Sí",
@@ -518,7 +529,7 @@ def _esperar_y_confirmar_popup(timeout: float = _TIMEOUT_POPUP_CONFIRM) -> bool:
                         btn.click_input()
                         _log.info("Clic en 'Sí' (%s) del popup (%.1fs)",
                                   ctrl_type, time.time() - t0)
-                        time.sleep(_SLEEP_CORTO)
+                        time.sleep(_SLEEP_MEDIO)
                         return True
                 except Exception:
                     continue
@@ -530,7 +541,7 @@ def _esperar_y_confirmar_popup(timeout: float = _TIMEOUT_POPUP_CONFIRM) -> bool:
 
         except Exception:
             pass
-        time.sleep(_SLEEP_CORTO)
+        time.sleep(_SLEEP_MEDIO)
 
     _log.warning("Popup confirmación no detectado en %.1fs — Enter fallback", timeout)
     _kbd.press(_Key.enter); _kbd.release(_Key.enter)
@@ -554,7 +565,7 @@ def _abrir_fb60_teclado(fila_idx: int, mismo_foco: bool = False) -> bool:
     if fila_idx > 0 and not mismo_foco:
         # Grid activo, modo prueba: avanzar fila con Down
         _kbd.press(_Key.down); _kbd.release(_Key.down)
-        time.sleep(_SLEEP_CORTO)
+        time.sleep(_SLEEP_MEDIO)
     else:
         # Primer ingreso o regreso de contabilizar: F2 activa foco del grid
         _kbd.press(_Key.f2); _kbd.release(_Key.f2)

@@ -23,8 +23,7 @@ _TAB_POS_TEXTO      = 6
 _TAB_POS_CCOSTO     = 5
 
 _SLEEP_MICRO = 0.1   # micro-pausa interna (retry clipboard, pre-paste)
-_SLEEP_CORTO = 0.3   # entre campos / teclas
-_SLEEP_MEDIO = 0.6   # entre pasos SAP
+_SLEEP_MEDIO = 0.6   # entre campos / pasos SAP
 _SLEEP_LARGO = 0.9   # tabla / salidas lentas
 _SLEEP_POPUP = 2.0   # espera popup Información tras Contabilizar
 
@@ -61,7 +60,7 @@ def _pegar(valor: str) -> None:
     with _kbd.pressed(_Key.ctrl):
         _kbd.press('v')
         _kbd.release('v')
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
 
 
 def _confirmar_abandon_fb60(timeout: float = _TIMEOUT_POPUP_ABANDON) -> bool:
@@ -94,7 +93,7 @@ def _confirmar_abandon_fb60(timeout: float = _TIMEOUT_POPUP_ABANDON) -> bool:
                     if btn.exists(timeout=0.3):
                         btn.click_input()
                         _log.info("Clic en 'Sí' (%s) del popup abandono FB60", ctrl_type)
-                        time.sleep(_SLEEP_CORTO)
+                        time.sleep(_SLEEP_MEDIO)
                         return True
                 except Exception:
                     continue
@@ -106,7 +105,7 @@ def _confirmar_abandon_fb60(timeout: float = _TIMEOUT_POPUP_ABANDON) -> bool:
             return True
         except Exception:
             pass
-        time.sleep(_SLEEP_CORTO)
+        time.sleep(_SLEEP_MEDIO)
 
     _log.warning("Popup abandono no detectado en %.1fs — Tab+Enter fallback", timeout)
     _kbd.press(_Key.tab);   _kbd.release(_Key.tab)
@@ -180,7 +179,7 @@ def _verificar_foco_acreedor(banco: dict) -> None:
     """
     proveedor_esp = banco.get("cuenta_mayor_sap", "")
     SAP.copiar()                    # Ctrl+A+C — copia el valor del campo activo
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
     valor_actual = pyperclip.paste().strip()
     _log.info("Foco Acreedor — campo activo: %r  esperado: %r", valor_actual, proveedor_esp)
     if valor_actual == proveedor_esp:
@@ -195,6 +194,18 @@ def _verificar_foco_acreedor(banco: dict) -> None:
     SAP.f12()                      # ahora sí llega a SAP
     time.sleep(_SLEEP_LARGO)
     _confirmar_abandon_fb60()
+    time.sleep(_SLEEP_MEDIO)
+    # Si FB60 sigue abierto, el F12 fue bloqueado por una alerta SAP —
+    # la alerta ya fue cerrada por _confirmar_abandon_fb60; reintentar F12 ahora
+    if _TITULO_FB60.lower() in SAP.titulo_actual().lower():
+        _log.warning("FB60 sigue abierto tras F12 — alerta bloqueante; reintentando cierre...")
+        print("  [!] FB60 no cerró (alerta bloqueante) — reintentando F12...")
+        SAP.activar(_TITULO_FB60)
+        time.sleep(_SLEEP_MEDIO)
+        SAP.f12()
+        time.sleep(_SLEEP_LARGO)
+        _confirmar_abandon_fb60()
+        time.sleep(_SLEEP_MEDIO)
     raise ValidacionFB60Error(
         f"Foco perdido al inicio: campo activo={valor_actual!r} ≠ Acreedor={proveedor_esp!r}"
     )
@@ -230,7 +241,7 @@ def registrar_factura(banco: dict) -> dict:
     texto_com    = banco["texto_comision"]
 
     _log.debug("FB60: cuenta_mayor=%r  centro_costo=%r", cuenta_mayor, centro_costo)
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
 
     # Esperar y posicionar la ventana FB60
     SAP.esperar_titulo(_TITULO_FB60, timeout=_TIMEOUT_FB60)
@@ -252,24 +263,24 @@ def registrar_factura(banco: dict) -> dict:
     # Pestaña Datos básicos — cabecera
     fecha_capturada = _copiar_fecha_factura()           # leer fecha del documento electrónico
     t = _t(f"fecha_factura → {fecha_capturada!r}", t)
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
     _llenar_fecha_contabilizacion(fecha_capturada)      # copiar misma fecha a Fecha Contab.
     t = _t(f"fecha_contabilizacion ← {fecha_capturada!r}", t)
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
     _marcar_calc_impuestos()                            # activar checkbox Calc.Impuestos
     t = _t("calc_impuestos ✓", t)
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
     _ingresar_impuestoB2(ind_impuesto)                  # indicador de impuesto (ej. B2)
     t = _t(f"indicador_impuesto ← {ind_impuesto!r}", t)
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
 
     # Pestaña Datos básicos — tabla de posiciones
     _posicion_normal(cuenta_mayor, texto_com, centro_costo)
     t = _t(f"posicion_normal ← cta={cuenta_mayor!r} imp={_IMPORTE_AUTO!r} txt={texto_com!r} cc={centro_costo!r}", t)
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
     _salir_tabla_y_limpiar_advertencia()                # salir de la tabla + Enter x2 (limpia advertencia vencimiento)
     t = _t("salir_tabla ✓", t)
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
 
     # Verificar foco en campo Acreedor antes de iniciar el llenado
     _verificar_foco_acreedor(banco)
@@ -281,12 +292,12 @@ def registrar_factura(banco: dict) -> dict:
     # Pestaña Pago — Vía pago
     _llenar_pestana_pago(via_pago)
     t = _t(f"pestana_pago ← {via_pago!r}", t)
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
 
     # Pestaña Detalle — Txt.cabec.
     _llenar_pestana_detalle(texto_cab)
     t = _t(f"pestana_detalle ← {texto_cab!r}", t)
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
 
     # Validación OCR — Txt.cabec. en pestaña Detalle
     _validar_pantalla_detalle_fb60()
@@ -314,7 +325,7 @@ def _copiar_fecha_factura() -> str:
     SAP.activar()
     SAP.tab(_TAB_FECHA_FACTURA)
     SAP.copiar()                   # Ctrl+A+C: selecciona todo el campo y copia (no solo Ctrl+C)
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
     return pyperclip.paste().strip()
 
 
@@ -349,12 +360,12 @@ def _marcar_calc_impuestos() -> None:
     SAP.activar()
     SAP.tab(_TAB_CALC_IMP)         # 5 tabs acumulados desde Acreedor (no desde el campo anterior)
     SAP.tecla('space')             # Space marca/desmarca el checkbox
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
     if os.getenv("MES_ANTERIOR", "0") == "1":
         # SAP muestra aviso de fecha fuera del período al marcar Calc.Impuestos
         # con documentos del mes anterior — Enter confirma y libera el teclado
         SAP.enter()
-        time.sleep(_SLEEP_CORTO)
+        time.sleep(_SLEEP_MEDIO)
 
 
 def _ingresar_impuestoB2(ind_impuesto: str) -> None:
@@ -398,16 +409,16 @@ def _posicion_normal(cuenta_mayor: str, texto_com: str, centro_costo: str) -> No
     """
     SAP.activar()
     SAP.tab(1)
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
     SAP.tecla('down')
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
     with _kbd.pressed(_Key.ctrl, _Key.shift):   # Ctrl+Shift+Tab: normaliza posición en tabla
         _kbd.press(_Key.tab); _kbd.release(_Key.tab)
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
     SAP.tab(2)                                  # → Cta.mayor
     time.sleep(_SLEEP_MEDIO)
     _pegar(cuenta_mayor)
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
     _llenar_resto_tabla(texto_com, centro_costo)
 
 
@@ -455,10 +466,10 @@ def _salir_tabla_y_limpiar_advertencia() -> None:
     SAP.salir_tabla()              # 4× Ctrl+Shift+Tab: vuelve al encabezado desde la tabla
     SAP.activar()                  # tabla y encabezado son contextos SAP distintos; restablecer foco
     SAP.enter()
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
     SAP.activar()
     SAP.enter()                    # segundo Enter: limpia advertencia "vencimiento en el pasado"
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
 
 
 def _llenar_pestana_pago(via_pago: str) -> None:
@@ -475,16 +486,16 @@ def _llenar_pestana_pago(via_pago: str) -> None:
     """
     SAP.activar()
     SAP.siguiente_pestana()        # Ctrl+Shift+AvPág — cambia a pestaña Pago
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
     # 3× Down en lugar de Tab — Tab va a Condición de Pago; Down navega directamente a Vía pago
     SAP.tecla('down')
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
     SAP.tecla('down')
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
     SAP.tecla('down')
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
     _pegar(via_pago)
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
 
 
 def _llenar_pestana_detalle(texto_cab: str) -> None:
@@ -506,10 +517,10 @@ def _llenar_pestana_detalle(texto_cab: str) -> None:
     SAP.activar()
     SAP.tab(1)                     # → campo Txt.cabec.
     _pegar(texto_cab)
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
     SAP.enter()                    # confirma el campo antes de salir de pestaña; sin esto SAP puede descartarlo
     SAP.activar()
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
 
 def _contabilizar_o_cancelar(fecha_capturada: str) -> str:
     """Delega a _contabilizar, asegurando que ningún campo quede en edit mode."""
@@ -533,7 +544,7 @@ def _contabilizar(fecha_capturada: str) -> str:
         str: Número de documento SAP, o "OK" si no se pudo extraer.
     """
     SAP.tab(1)                     # saca el campo activo de edit mode; sin este tab SAP ignora el clic
-    time.sleep(_SLEEP_CORTO)
+    time.sleep(_SLEEP_MEDIO)
     try:
         from pywinauto import Application
         # "Registrar factura de acreedor" es el título completo en ventana maximizada
