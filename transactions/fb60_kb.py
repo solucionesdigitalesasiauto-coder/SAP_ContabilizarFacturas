@@ -171,6 +171,33 @@ def _validar_pantalla_detalle_fb60() -> None:
     print("  ✓ Validación FB60 Detalle OK")
 
 
+def _verificar_foco_acreedor(banco: dict) -> None:
+    """Verifica que el foco esté en el campo Acreedor al inicio de FB60.
+
+    Copia el valor del campo activo y lo compara con el proveedor esperado
+    (banco["cuenta_mayor_sap"]). Si no coincide el foco está perdido:
+    cancela FB60 con F12 y lanza ValidacionFB60Error para que el loop reintente.
+    """
+    proveedor_esp = banco.get("cuenta_mayor_sap", "")
+    SAP.copiar()                    # Ctrl+A+C — copia el valor del campo activo
+    time.sleep(_SLEEP_CORTO)
+    valor_actual = pyperclip.paste().strip()
+    _log.info("Foco Acreedor — campo activo: %r  esperado: %r", valor_actual, proveedor_esp)
+    if valor_actual == proveedor_esp:
+        return
+    # Foco perdido — salir de FB60 para que el loop reintente desde ZFIEC015
+    _log.warning("FOCO PERDIDO al inicio FB60: campo=%r  proveedor=%r", valor_actual, proveedor_esp)
+    print(f"  [!] Foco perdido en FB60 (campo={valor_actual!r}) — cancelando para reintentar")
+    SAP.activar(_TITULO_FB60)
+    time.sleep(_SLEEP_CORTO)
+    SAP.f12()
+    time.sleep(_SLEEP_LARGO)
+    _confirmar_abandon_fb60()
+    raise ValidacionFB60Error(
+        f"Foco perdido al inicio: campo activo={valor_actual!r} ≠ Acreedor={proveedor_esp!r}"
+    )
+
+
 def registrar_factura(banco: dict) -> dict:
     """Completa el formulario FB60 para una factura de comisión bancaria.
 
@@ -209,6 +236,9 @@ def registrar_factura(banco: dict) -> dict:
     SAP.posicionar_ventana()         # primero posicionar (puede redibujar SAP)
     SAP.activar(_TITULO_FB60)
     time.sleep(_SLEEP_LARGO)         # SAP necesita renderizar el form antes de tabular
+
+    # Verificar foco en campo Acreedor antes de iniciar el llenado
+    _verificar_foco_acreedor(banco)
 
     def _t(label: str, t0: float) -> float:
         t1 = time.time()
