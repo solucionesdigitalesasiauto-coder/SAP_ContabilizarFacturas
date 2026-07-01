@@ -282,9 +282,6 @@ def registrar_factura(banco: dict) -> dict:
     t = _t("salir_tabla ✓", t)
     time.sleep(_SLEEP_MEDIO)
 
-    # Verificar foco en campo Acreedor antes de iniciar el llenado
-    _verificar_foco_acreedor(banco)
-    
     # Validación OCR — Datos básicos completos antes de cambiar de pestaña
     _validar_pantalla_fb60()
     t = _t("validacion_ocr ✓", t)
