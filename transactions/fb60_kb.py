@@ -123,12 +123,12 @@ def _validar_pantalla_fb60() -> None:
     Si falla: cancela el doc con F12 y lanza ValidacionFB60Error — el caller
     lo captura para saltar este documento y continuar con el siguiente.
     """
-    # Import tardío: evita circular import y omite silenciosamente si Tesseract no está
     try:
         from transactions.validacion_Pantalla import leer_y_validar_fb60
-    except (ImportError, SystemExit) as exc:
-        _log.warning("Validación OCR FB60 omitida — %s", exc)
-        return
+    except (ImportError, Exception) as exc:
+        _log.error("Validación OCR FB60 no disponible — %s", exc)
+        print(f"  [!] OCR no operativo — abortando ejecución")
+        import sys; sys.exit(1)
     resultado = leer_y_validar_fb60()
     if not resultado["valido"]:
         difs = resultado["diferencias"]
@@ -148,12 +148,12 @@ def _validar_pantalla_fb60() -> None:
 
 def _validar_pantalla_detalle_fb60() -> None:
     """Valida por OCR que Txt.cabec. en la pestaña Detalle coincide con el valor esperado."""
-    # Import tardío: evita circular import y omite silenciosamente si Tesseract no está
     try:
         from transactions.validacion_Pantalla import leer_y_validar_fb60_detalle
-    except (ImportError, SystemExit) as exc:
-        _log.warning("Validación OCR FB60 Detalle omitida — %s", exc)
-        return
+    except (ImportError, Exception) as exc:
+        _log.error("Validación OCR FB60 Detalle no disponible — %s", exc)
+        print(f"  [!] OCR no operativo — abortando ejecución")
+        import sys; sys.exit(1)
     resultado = leer_y_validar_fb60_detalle()
     if not resultado["valido"]:
         difs = resultado["diferencias"]
