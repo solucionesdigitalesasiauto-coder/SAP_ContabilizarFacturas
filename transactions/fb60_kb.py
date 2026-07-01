@@ -475,6 +475,10 @@ def _llenar_pestana_detalle(texto_cab: str) -> None:
     SAP.enter()                    # confirma el campo antes de salir de pestaña; sin esto SAP puede descartarlo
     SAP.activar()
     time.sleep(_SLEEP_CORTO)
+    SAP.pestana_anterior()         # Detalle → Pago
+    time.sleep(_SLEEP_CORTO)
+    SAP.pestana_anterior()         # Pago → Datos básicos (cursor queda en Acreedor para doc siguiente)
+    time.sleep(_SLEEP_CORTO)
 
 def _contabilizar_o_cancelar(fecha_capturada: str) -> str:
     """Delega a _contabilizar, asegurando que ningún campo quede en edit mode."""
