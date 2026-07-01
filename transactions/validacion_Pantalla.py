@@ -83,6 +83,26 @@ else:
 
 
 # ============================================================
+# VERIFICACIÓN DE TESSERACT
+# ============================================================
+
+def verificar_tesseract() -> bool:
+    """Ejecuta un OCR mínimo para confirmar que Tesseract está operativo.
+
+    Returns:
+        bool: True si Tesseract responde sin error, False en caso contrario.
+    """
+    try:
+        from PIL import Image
+        img = Image.new("RGB", (120, 30), color=(255, 255, 255))
+        pytesseract.image_to_string(img, lang="eng", config="--psm 6")
+        return True
+    except Exception as e:
+        _log.error("Tesseract no operativo: %s", e)
+        return False
+
+
+# ============================================================
 # FUNCIONES GENERALES OCR / NORMALIZACIÓN
 # ============================================================
 

@@ -947,6 +947,26 @@ def main():
     print("║   ASIAUTO S.A.                                       ║")
     print("╚══════════════════════════════════════════════════════╝")
     print()
+
+    # Verificar Tesseract antes de abrir SAP
+    try:
+        from transactions.validacion_Pantalla import verificar_tesseract
+        if not verificar_tesseract():
+            print("  [!] Tesseract OCR no está operativo.")
+            print("      Instala Tesseract-OCR o usa el ejecutable con OCR embebido.")
+            print("      Descarga: https://github.com/UB-Mannheim/tesseract/wiki")
+            if getattr(sys, "frozen", False):
+                input("\n  Presiona Enter para cerrar...")
+            sys.exit(1)
+        print("  [✓] Tesseract OCR operativo.")
+    except (ImportError, SystemExit) as _e:
+        if isinstance(_e, SystemExit):
+            raise
+        print(f"  [!] No se pudo verificar Tesseract: {_e}")
+        if getattr(sys, "frozen", False):
+            input("\n  Presiona Enter para cerrar...")
+        sys.exit(1)
+
     _validar_entorno()
 
     bancos = cargar_bancos()
