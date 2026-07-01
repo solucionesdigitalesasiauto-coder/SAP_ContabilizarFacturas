@@ -343,6 +343,14 @@ def procesar_documentos(banco: dict, max_docs: int = None, **_):
     procesados = []
     errores    = []
 
+    titulo_actual = SAP.titulo_actual()
+    if "recepci" not in titulo_actual.lower():
+        raise RuntimeError(
+            f"Pantalla incorrecta al iniciar procesamiento — se esperaba ZFIEC015 grid, "
+            f"pantalla actual: {titulo_actual!r}"
+        )
+    _log.info("Pantalla ZFIEC015 grid confirmada: %r", titulo_actual)
+
     if not _abrir_fb60_teclado(0):
         _log.info("Primer intento FB60 falló — reintentando en 2s...")
         time.sleep(_SLEEP_REINTENTAR)
