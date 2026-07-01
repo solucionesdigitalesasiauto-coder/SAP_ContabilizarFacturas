@@ -615,18 +615,20 @@ def cargar_bancos() -> list:
 
 
 def fechas_mes_actual():
-    """Calcula el primer y último día del mes actual en formato SAP (DD.MM.YYYY).
+    """Calcula el primer y último día del período en formato SAP (DD.MM.YYYY).
+
+    Lee MES_ANTERIOR del .env: "1" → mes anterior, cualquier otro valor → mes actual.
 
     Returns:
-        tuple[str, str]: (fecha_desde, fecha_hasta) del mes actual.
-
-    Hardcoded:
-        - "%d.%m.%Y": formato de fecha SAP (STRING)
+        tuple[str, str]: (fecha_desde, fecha_hasta) del período seleccionado.
     """
     hoy = date.today()
-    primero = hoy.replace(day=1).strftime("%d.%m.%Y")
-    ultimo_dia = calendar.monthrange(hoy.year, hoy.month)[1]
-    ultimo = hoy.replace(day=ultimo_dia).strftime("%d.%m.%Y")
+    if os.getenv("MES_ANTERIOR", "0") == "1":
+        año, mes = (hoy.year - 1, 12) if hoy.month == 1 else (hoy.year, hoy.month - 1)
+    else:
+        año, mes = hoy.year, hoy.month
+    primero = date(año, mes, 1).strftime("%d.%m.%Y")
+    ultimo  = date(año, mes, calendar.monthrange(año, mes)[1]).strftime("%d.%m.%Y")
     return primero, ultimo
 
 
@@ -706,10 +708,11 @@ def procesar_banco(banco: dict, fecha_desde: str, fecha_hasta: str, max_docs: in
     except Exception:
         _base_fb60 = {}
     _base_fb60.update({
-        "Combo B2":     os.getenv("INDICADOR_IMPUESTO", "B2"),
-        "Cta.mayor":    banco["cuenta_mayor"],
-        "Centro coste": banco["centro_costo"],
-        "Texto":        banco["texto_comision"],
+        "Clase documento": os.getenv("FB60_CLASE_DOCUMENTO", "Factura acreedor"),
+        "Combo B2":        os.getenv("INDICADOR_IMPUESTO", "B2"),
+        "Cta.mayor":       banco["cuenta_mayor"],
+        "Centro coste":    banco["centro_costo"],
+        "Texto":           banco["texto_comision"],
     })
     # Las fechas las valida el OCR cruzando factura vs contab. — no deben estar en el JSON esperado
     _base_fb60.pop("Fecha factura", None)

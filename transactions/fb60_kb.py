@@ -315,6 +315,11 @@ def _marcar_calc_impuestos() -> None:
     SAP.tab(_TAB_CALC_IMP)         # 5 tabs acumulados desde Acreedor (no desde el campo anterior)
     SAP.tecla('space')             # Space marca/desmarca el checkbox
     time.sleep(_SLEEP_CORTO)
+    if os.getenv("MES_ANTERIOR", "0") == "1":
+        # SAP muestra aviso de fecha fuera del período al marcar Calc.Impuestos
+        # con documentos del mes anterior — Enter confirma y libera el teclado
+        SAP.enter()
+        time.sleep(_SLEEP_CORTO)
 
 
 def _ingresar_impuestoB2(ind_impuesto: str) -> None:

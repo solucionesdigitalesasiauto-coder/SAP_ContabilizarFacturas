@@ -41,7 +41,7 @@ _GRID_SAP_ID          = "wnd[0]/usr/cntlGRID1/shellcont/shell"
 _COL_FB60             = "FB60"                                   # columna de botón en grilla
 _TIMEOUT_ZFIEC        = 15   # segundos esperando pantalla ZFIEC015
 _TIMEOUT_FB60         = 5    # segundos esperando apertura de FB60
-_MAX_INTENTOS_POPUP   = 3    # reintentos Enter para popup HTML de ZFIEC015
+_MAX_INTENTOS_POPUP   = 2    # reintentos Enter para popup HTML de ZFIEC015
 
 # campos.py contiene los IDs de elementos SAP para scripting (opcional)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "diagnostico"))

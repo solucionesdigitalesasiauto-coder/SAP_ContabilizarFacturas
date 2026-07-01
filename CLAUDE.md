@@ -34,7 +34,6 @@ python main.py
 SAP/
 ├── main.py                     # ★ PUNTO DE ENTRADA — menú interactivo multi-banco
 ├── sap_gui.py                  # Motor de automatización (teclado/mouse: pynput + pyautogui)
-├── coordenadas.py              # Tab-counts calibrados con Au3Info (17-18/06/2026)
 ├── bancos.json                 # Configuración de los 7 bancos (nombre, proveedor, cuenta_mayor, textos)
 ├── .env                        # Credenciales y parámetros (NO subir a repositorio)
 ├── requirements.txt            # pywin32, python-dotenv, pyautogui, pyperclip, pynput, pywinauto, pillow, pytesseract
@@ -87,6 +86,7 @@ Cada banco tiene su propia `cuenta_mayor` GL — se lee desde `bancos.json`, **n
 | VIA_PAGO | T | Pestaña Pago — Vía pago |
 | INDICADOR_IMPUESTO | B2 | IVA Compras 15% Crédito |
 | TIPO_DOC_ZFIEC | 01 | Tipo de Documento en ZFIEC015 |
+| MES_ANTERIOR | 0 | `0`=mes actual, `1`=mes anterior. Determina el período de búsqueda en ZFIEC015. |
 | CONTABILIZAR | 0 | Valor inicial (`0`=prueba, `1`=real). **El menú interactivo lo sobreescribe en tiempo de ejecución.** |
 | MAX_DOCS_BANCO | 1 | Valor inicial de documentos por banco. **El menú interactivo lo reemplaza; solo aplica si se omite el menú.** |
 | SAP_WIN_X / Y | 0 / 0 | Posición de ventana SAP al iniciar |
@@ -148,9 +148,7 @@ Cada banco tiene su propia `cuenta_mayor` GL — se lee desde `bancos.json`, **n
 
 ---
 
-## Tab-counts calibrados (`coordenadas.py`)
-
-Calibrados con Au3Info el 17-18/06/2026 en resolución actual. Si cambia monitor o resolución, recalibrar con `diagnostico/campos.py`.
+## Tab-counts calibrados
 
 ### ZFIEC015 — tabs desde campo Sociedad
 | Campo | Tabs |

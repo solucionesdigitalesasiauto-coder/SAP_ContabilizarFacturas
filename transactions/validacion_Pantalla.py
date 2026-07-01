@@ -1448,7 +1448,7 @@ def extraer_fechas_fb60_v2(img, lineas):
 
 
 def extraer_clase_documento_fb60_v2(img, lineas):
-    """Extrae clase documento FB60."""
+    """Extrae clase documento FB60 — retorna el valor real del campo."""
     bboxes = [
         (215, 425, 445, 465),
         (210, 420, 455, 470),
@@ -1459,11 +1459,12 @@ def extraer_clase_documento_fb60_v2(img, lineas):
         txt = ocr_crop_fb60(img, bbox, modo="texto")
         n = normalizar(txt)
 
-        if "facturaacreedor" in n:
+        if "facturaacreedor" in n or ("factura" in n and "acreedor" in n):
             return "Factura acreedor"
 
-        if "factura" in n and "acreedor" in n:
-            return "Factura acreedor"
+        if txt and len(txt) > 2:
+            # Retorna el valor real (ej. "Tiquetes Aéreos") para que la validación lo compare
+            return limpiar(txt)
 
     for l in lineas:
         n = normalizar(l)
@@ -1474,11 +1475,8 @@ def extraer_clase_documento_fb60_v2(img, lineas):
         if "clasedoc" in n and "factura" in n:
             return "Factura acreedor"
 
-    titulo = extraer_titulo_fb60_v2(lineas)
-
-    if titulo and "registrar factura de acreedor" in titulo.lower():
-        return "Factura acreedor"
-
+    # El título de la ventana SIEMPRE dice "Registrar factura de acreedor" — no se usa
+    # como fallback porque produciría falsos positivos cuando Clase doc. es incorrecto
     return None
 
 
