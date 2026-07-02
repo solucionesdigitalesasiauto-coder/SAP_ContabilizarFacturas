@@ -132,6 +132,11 @@ def activar(titulo_contiene=None):
     try:
         win32gui.SetForegroundWindow(hwnd)
     except Exception:
+        pass
+    if win32gui.GetForegroundWindow() != hwnd:
+        # SetForegroundWindow puede fallar en silencio (sin excepción) por el
+        # focus-stealing prevention de Windows — verificar el resultado real
+        # en vez de confiar en que no haya lanzado una excepción.
         import win32process
         import ctypes
         fg = win32gui.GetForegroundWindow()

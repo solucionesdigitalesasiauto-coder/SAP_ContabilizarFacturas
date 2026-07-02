@@ -26,6 +26,7 @@ _SLEEP_MICRO = 0.1   # micro-pausa interna (retry clipboard, pre-paste)
 _SLEEP_MEDIO = 0.6   # entre campos / pasos SAP
 _SLEEP_LARGO = 0.9   # tabla / salidas lentas
 _SLEEP_POPUP = 2.0   # espera popup Información tras Contabilizar
+_SLEEP_RETRY_FOCO = 2.0  # espera para que SAP asiente el foco antes/durante _verificar_foco_datos_basicos
 
 _MAX_REINTENTOS_CLIP  = 5    # reintentos de verificación del portapapeles
 _TIMEOUT_PYWINAUTO    = 5    # timeout pywinauto connect a ventana FB60
@@ -63,6 +64,214 @@ def _pegar(valor: str) -> None:
     time.sleep(_SLEEP_MEDIO)
 
 
+def _hay_popup_activo_fb60() -> bool:
+    """Detecta si hay un diálogo/popup activo en SAP (wnd[1]) vía SAP GUI Scripting.
+
+    Returns True si existe wnd[1] (popup activo), False si solo está la ventana principal.
+    """
+    try:
+        import win32com.client
+        sap     = win32com.client.GetObject("SAPGUI")
+        session = sap.GetScriptingEngine().Children(0).Children(0)
+        session.findById("wnd[1]")   # lanza excepción si no existe
+        _log.info("wnd[1] DETECTADO — hay diálogo activo")
+        return True
+    except Exception:
+        _log.debug("wnd[1] no existe — sin diálogo")
+        return False
+
+
+def _salir_fb60_con_si() -> None:
+    """Cierra FB60 confirmando 'Sí' en el popup de abandono.
+
+    1. Limpia diálogos bloqueantes (wnd[1]) vía _click_si_dialog_fb60().
+    2. Ejecuta F12 para disparar el popup de abandono ("Fin tratamiento").
+    3. Confirma 'Sí' en el popup de abandono vía _click_si_dialog_fb60().
+
+    SAP dialogs: Tab navega entre botones (Left no funciona).
+    _click_si_dialog_fb60() busca 'Sí' en tbar[0] y wnd[1]/usr/btnSPOP-OPTION1.
+
+    Reutilizable por todos los validadores de pestaña (_verificar_foco_*).
+    """
+    _log.info("INICIO — limpiando popups bloqueantes antes del F12")
+
+    # 1. Limpiar popup(s) bloqueantes ANTES del F12 (hasta 4 diálogos encadenados)
+    for intento in range(1, 5):
+        if not _hay_popup_activo_fb60():
+            _log.info("sin popup activo — continúa a F12 (intento %d)", intento)
+            break
+        _log.info("popup bloqueante intento %d — llamando _click_si_dialog_fb60", intento)
+        _click_si_dialog_fb60()
+        time.sleep(_SLEEP_MEDIO)
+    else:
+        _log.warning("loop completó 4 intentos — puede quedar popup sin cerrar")
+
+    # 2. F12 para disparar popup de abandono
+    _log.info("ejecutando F12 para popup de abandono")
+    SAP.activar(_TITULO_FB60)
+    time.sleep(_SLEEP_MEDIO)
+    SAP.f12()
+    time.sleep(2.0)                                   # esperar popup de abandono
+
+    # 3. Confirmar 'Sí' en popup de abandono ("Fin tratamiento") — "No" tiene el foco
+    #    por defecto, 1 Tab mueve a "Sí", Enter confirma.
+    _log.info("Tab+Enter para confirmar Sí en popup de abandono")
+    SAP.tecla('tab')
+    time.sleep(_SLEEP_MEDIO)
+    SAP.tecla('enter')
+    _log.info("FIN — FB60 debería estar cerrado")
+    time.sleep(_SLEEP_LARGO)
+
+
+def _copiar_acreedor_seguro() -> str:
+    """Copia el campo activo y lee el portapapeles; una excepción cuenta como valor vacío."""
+    try:
+        SAP.activar()
+        SAP.copiar()
+        return SAP.leer_portapapeles()
+    except Exception as e:
+        _log.warning("error al copiar/leer portapapeles: %s", e)
+        return ""
+
+
+def _verificar_foco_datos_basicos(proveedor: str) -> None:
+    """Verifica el foco en Datos básicos ANTES del OCR y valida por OCR si el foco es correcto.
+
+    1. Copia el campo activo (debe ser Acreedor) con Ctrl+A+C y compara con el proveedor.
+    2. Si coincide → llama al OCR completo de la pestaña Datos básicos.
+    3. Si no coincide → foco interrumpido → llama _salir_fb60_con_si() y lanza
+       ValidacionFB60Error sin esperar el OCR lento (~80 s).
+
+    Args:
+        proveedor: banco["cuenta_mayor_sap"] — código proveedor SAP esperado en Acreedor.
+    """
+    _log.info("INICIO — copiando campo Acreedor (esperado=%r)", proveedor)
+    acreedor_actual = _copiar_acreedor_seguro()
+    _log.info("copiar() → %r", acreedor_actual)
+
+    if not acreedor_actual:
+        # Portapapeles vacío (o excepción) — el foco puede seguir en el campo correcto,
+        # sin necesidad de activar() (esa acción puede alterar el foco real).
+        # Solo reintentar copiar() tras una pausa.
+        _log.warning("copiar() vacío — reintentando sin activar()")
+        time.sleep(_SLEEP_RETRY_FOCO)
+        acreedor_actual = _copiar_acreedor_seguro()
+        _log.info("copiar() tras reintento → %r", acreedor_actual)
+
+    if acreedor_actual == proveedor.strip():
+        _log.info("Acreedor OK: %r — procediendo al OCR", acreedor_actual)
+        _validar_pantallaOCR_fb60()
+        return
+
+    _log.error(
+        "FOCO PERDIDO — esperado=%r detectado=%r — llamando _salir_fb60_con_si",
+        proveedor, acreedor_actual,
+    )
+    _salir_fb60_con_si()
+    raise ValidacionFB60Error(
+        f"Acreedor: esperado={proveedor!r} detectado={acreedor_actual!r}"
+    )
+
+
+
+def _click_si_dialog_fb60() -> bool:
+    """Clickea el botón 'Sí' en el diálogo modal activo de SAP (wnd[1]).
+
+    Usa SAP GUI Scripting (win32com) como primera opción — accede al árbol de objetos
+    SAP directamente y encuentra el botón por texto/tooltip sin depender de UIA.
+    Fallback: pywinauto UIA.
+    Returns True si encontró y pulsó 'Sí', False si no había diálogo activo.
+    """
+    # 1. SAP GUI Scripting (confiable para controles SAP nativos — mismo backend que ZFIEC015)
+    try:
+        import win32com.client
+        sap = win32com.client.GetObject("SAPGUI")
+        eng = sap.GetScriptingEngine()
+        session = eng.Children(0).Children(0)
+        try:
+            session.findById("wnd[1]")   # lanza excepción si no hay diálogo
+        except Exception:
+            return False                 # no hay diálogo abierto
+
+        _SI_LOWER = ('sí', 'si', 'yes', 'ja')
+
+        def _texto_es_si(btn_obj) -> bool:
+            for attr in ('text', 'tooltip'):
+                v = (getattr(btn_obj, attr, '') or '').strip().lower()
+                if v in _SI_LOWER:
+                    return True
+            return False
+
+        # a) Buscar en toolbar (diálogos de advertencia de período)
+        _log.info("buscando 'Sí' en wnd[1]/tbar[0]/btn[0..9]")
+        for i in range(10):
+            try:
+                btn = session.findById(f"wnd[1]/tbar[0]/btn[{i}]")
+                t = (getattr(btn, 'text', '') or '').strip()
+                tt = (getattr(btn, 'tooltip', '') or '').strip()
+                _log.info("tbar[0]/btn[%d]: text=%r tooltip=%r", i, t, tt)
+                if _texto_es_si(btn):
+                    btn.press()
+                    _log.info("✓ tbar[0]/btn[%d] 'Sí' presionado", i)
+                    time.sleep(_SLEEP_MEDIO)
+                    return True
+            except Exception:
+                _log.info("tbar[0]/btn[%d] no existe — fin toolbar", i)
+                break
+
+        # b) Buscar en body — POPUP_TO_CONFIRM ("Fin tratamiento"):
+        #    wnd[1]/usr/btnSPOP-OPTION1 = Sí,  wnd[1]/usr/btnSPOP-OPTION2 = No
+        _log.info("buscando 'Sí' en wnd[1]/usr/btnSPOP-OPTION1/2")
+        for path in ("wnd[1]/usr/btnSPOP-OPTION1", "wnd[1]/usr/btnSPOP-OPTION2"):
+            try:
+                btn = session.findById(path)
+                t = (getattr(btn, 'text', '') or '').strip()
+                tt = (getattr(btn, 'tooltip', '') or '').strip()
+                _log.info("%s: text=%r tooltip=%r", path, t, tt)
+                if _texto_es_si(btn):
+                    btn.press()
+                    _log.info("✓ %s 'Sí' presionado", path)
+                    time.sleep(_SLEEP_MEDIO)
+                    return True
+            except Exception as ex:
+                _log.info("%s no encontrado: %s", path, ex)
+                continue
+
+        # c) Fallback teclado: Tab navega entre botones en diálogos SAP (Left no funciona)
+        _log.warning("'Sí' NO detectado por scripting — Tab+Enter fallback")
+        SAP.activar(_TITULO_FB60)
+        time.sleep(_SLEEP_MEDIO)
+        _kbd.press(_Key.tab);  _kbd.release(_Key.tab)
+        time.sleep(_SLEEP_MICRO)
+        _kbd.press(_Key.enter); _kbd.release(_Key.enter)
+        _log.info("Tab+Enter enviado")
+        time.sleep(_SLEEP_MEDIO)
+        return True
+    except Exception as e:
+        _log.warning("SAP Scripting no disponible: %s", e)
+
+    # 2. pywinauto UIA (fallback)
+    try:
+        from pywinauto import Application
+        app = Application(backend="uia").connect(title_re=".*Registrar factura.*", timeout=0.3)
+        win = app.window(title_re=".*Registrar factura.*")
+        for ctrl_type in ("Button", "Hyperlink", "ListItem"):
+            for titulo in ("Sí", "Si", "SÍ", "SI", "Yes", "Ja"):
+                try:
+                    btn = win.child_window(title=titulo, control_type=ctrl_type)
+                    if btn.exists(timeout=0.2):
+                        btn.click_input()
+                        _log.info("pywinauto UIA: 'Sí' (%s / %r)", ctrl_type, titulo)
+                        time.sleep(_SLEEP_MEDIO)
+                        return True
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    return False   # no se detectó diálogo activo
+
+
 def _confirmar_abandon_fb60(timeout: float = _TIMEOUT_POPUP_ABANDON) -> bool:
     """Detecta y confirma el popup de abandono de FB60 (F12) via pywinauto.
 
@@ -72,9 +281,7 @@ def _confirmar_abandon_fb60(timeout: float = _TIMEOUT_POPUP_ABANDON) -> bool:
     try:
         from pywinauto import Application
     except ImportError:
-        _log.debug("pywinauto no disponible — Tab+Enter fallback")
-        _kbd.press(_Key.tab);   _kbd.release(_Key.tab)
-        time.sleep(0.2)
+        _log.debug("pywinauto no disponible — Enter fallback")
         _kbd.press(_Key.enter); _kbd.release(_Key.enter)
         return True
 
@@ -97,28 +304,28 @@ def _confirmar_abandon_fb60(timeout: float = _TIMEOUT_POPUP_ABANDON) -> bool:
                         return True
                 except Exception:
                     continue
-            # Botón no accesible via UIA — SAP posiciona foco en "Sí" por defecto: Tab+Enter
-            _log.debug("Botón 'Sí' no encontrado via UIA — Tab+Enter fallback")
-            _kbd.press(_Key.tab);   _kbd.release(_Key.tab)
-            time.sleep(0.2)
+            # Botón no accesible via UIA — SAP posiciona foco en "Sí" por defecto: Enter directo
+            _log.debug("Botón 'Sí' no encontrado via UIA — Enter fallback")
             _kbd.press(_Key.enter); _kbd.release(_Key.enter)
             return True
         except Exception:
             pass
         time.sleep(_SLEEP_MEDIO)
 
-    _log.warning("Popup abandono no detectado en %.1fs — Tab+Enter fallback", timeout)
-    _kbd.press(_Key.tab);   _kbd.release(_Key.tab)
-    time.sleep(0.2)
+    _log.warning("Popup abandono no detectado en %.1fs — Enter fallback", timeout)
     _kbd.press(_Key.enter); _kbd.release(_Key.enter)
     return False
 
 
-def _cerrar_fb60_forzado(max_intentos: int = 3) -> bool:
-    """Cierra FB60 con F12, reintentando si quedan diálogos bloqueantes.
+def _cerrar_fb60_forzado(max_intentos: int = 5) -> bool:
+    """Cierra FB60 descartando primero diálogos bloqueantes, luego F12 + Enter.
 
-    Tras cada F12+confirm verifica el título. Si FB60 sigue abierto, envía
-    Enter para desbloquear el diálogo y reintenta F12.
+    Patrón por intento:
+      1. _click_si_dialog_fb60() × N — descarta cualquier diálogo Sí/No activo
+         (período, vencimiento, etc.) clickeando 'Sí' via SAP Scripting antes del F12.
+         Esto evita que F12 sea interceptado por el diálogo y actúe como 'No'.
+      2. F12 — muestra popup de abandono (Sí tiene foco por defecto).
+      3. Enter — confirma 'Sí' en el popup de abandono.
 
     Returns:
         bool: True si logró salir de FB60, False si agotó los intentos.
@@ -126,21 +333,28 @@ def _cerrar_fb60_forzado(max_intentos: int = 3) -> bool:
     for intento in range(1, max_intentos + 1):
         SAP.activar(_TITULO_FB60)
         time.sleep(_SLEEP_MEDIO)
+        # Paso 1: limpiar diálogos bloqueantes ANTES del F12 (click 'Sí' vía SAP Scripting)
+        for _ in range(4):
+            if not _click_si_dialog_fb60():
+                break
+            time.sleep(_SLEEP_MEDIO)
+        # Paso 2: F12 para el popup de abandono (ya sin diálogos que lo intercepten)
         SAP.f12()
-        time.sleep(_SLEEP_LARGO)
-        _confirmar_abandon_fb60()
-        time.sleep(_SLEEP_MEDIO)
+        time.sleep(2.0)             # popup de abandono puede tardar en aparecer
+        # Paso 3: Enter en el popup de abandono (Sí tiene foco por defecto)
+        if _TITULO_FB60.lower() in SAP.titulo_actual().lower():
+            SAP.enter()
+            time.sleep(_SLEEP_LARGO)
         if _TITULO_FB60.lower() not in SAP.titulo_actual().lower():
             _log.info("FB60 cerrado en intento %d", intento)
             return True
-        _log.warning("FB60 sigue abierto tras intento %d — Enter para desbloquear diálogo", intento)
-        SAP.enter()
+        _log.warning("FB60 sigue abierto tras intento %d", intento)
         time.sleep(_SLEEP_MEDIO)
     _log.error("No se pudo cerrar FB60 tras %d intentos", max_intentos)
     return False
 
 
-def _validar_pantalla_fb60() -> None:
+def _validar_pantallaOCR_fb60() -> None:
     """Valida por OCR los campos de Datos básicos FB60 antes de cambiar de pestaña.
 
     Importa leer_y_validar_fb60 en tiempo de ejecución para evitar importación
@@ -190,30 +404,6 @@ def _validar_pantalla_detalle_fb60() -> None:
     print("  ✓ Validación FB60 Detalle OK")
 
 
-def _verificar_foco_acreedor(banco: dict) -> None:
-    """Verifica que el foco esté en el campo Acreedor al inicio de FB60.
-
-    Copia el valor del campo activo y lo compara con el proveedor esperado
-    (banco["cuenta_mayor_sap"]). Si no coincide el foco está perdido:
-    cancela FB60 con F12 y lanza ValidacionFB60Error para que el loop reintente.
-    """
-    proveedor_esp = banco.get("cuenta_mayor_sap", "")
-    SAP.copiar()                    # Ctrl+A+C — copia el valor del campo activo
-    time.sleep(_SLEEP_MEDIO)
-    valor_actual = pyperclip.paste().strip()
-    _log.info("Foco Acreedor — campo activo: %r  esperado: %r", valor_actual, proveedor_esp)
-    if valor_actual == proveedor_esp:
-        return
-    # Foco perdido — recuperar ventana antes de F12; sin esto F12 no llega a SAP
-    _log.warning("FOCO PERDIDO al inicio FB60: campo=%r  proveedor=%r", valor_actual, proveedor_esp)
-    print(f"  [!] Foco perdido en FB60 (campo={valor_actual!r}) — recuperando ventana...")
-    SAP.posicionar_ventana()       # restaura posición en pantalla (minimizada/tapada)
-    time.sleep(_SLEEP_MEDIO)
-    _cerrar_fb60_forzado()
-    raise ValidacionFB60Error(
-        f"Foco perdido al inicio: campo activo={valor_actual!r} ≠ Acreedor={proveedor_esp!r}"
-    )
-
 
 def registrar_factura(banco: dict) -> dict:
     """Completa el formulario FB60 para una factura de comisión bancaria.
@@ -239,6 +429,7 @@ def registrar_factura(banco: dict) -> dict:
     # Leer parámetros contables del banco y del .env
     cuenta_mayor = banco.get("cuenta_mayor", "")
     centro_costo = banco.get("centro_costo", "")
+    proveedor    = banco.get("cuenta_mayor_sap", "")
     via_pago     = os.getenv("VIA_PAGO", "")
     ind_impuesto = os.getenv("INDICADOR_IMPUESTO", "")
     texto_cab    = banco["texto_cabecera"]
@@ -253,9 +444,6 @@ def registrar_factura(banco: dict) -> dict:
     SAP.posicionar_ventana()         # primero posicionar (puede redibujar SAP)
     SAP.activar(_TITULO_FB60)
     time.sleep(_SLEEP_LARGO)         # SAP necesita renderizar el form antes de tabular
-
-    # Verificar foco en campo Acreedor antes de iniciar el llenado
-    _verificar_foco_acreedor(banco)
 
     def _t(label: str, t0: float) -> float:
         t1 = time.time()
@@ -282,13 +470,13 @@ def registrar_factura(banco: dict) -> dict:
     _posicion_normal(cuenta_mayor, texto_com, centro_costo)
     t = _t(f"posicion_normal ← cta={cuenta_mayor!r} imp={_IMPORTE_AUTO!r} txt={texto_com!r} cc={centro_costo!r}", t)
     time.sleep(_SLEEP_MEDIO)
-    _salir_tabla_y_limpiar_advertencia()                # salir de la tabla + Enter x2 (limpia advertencia vencimiento)
+    _salir_tabla_y_limpiar_advertencia()
     t = _t("salir_tabla ✓", t)
-    time.sleep(_SLEEP_MEDIO)
+    time.sleep(_SLEEP_RETRY_FOCO)
 
-    # Validación OCR — Datos básicos completos antes de cambiar de pestaña
-    _validar_pantalla_fb60()
-    t = _t("validacion_ocr ✓", t)
+    # Verificación de foco (Acreedor) + OCR — Datos básicos
+    _verificar_foco_datos_basicos(proveedor)
+    t = _t("verificar_datos_basicos ✓", t)
 
     # Pestaña Pago — Vía pago
     _llenar_pestana_pago(via_pago)
@@ -458,19 +646,32 @@ def _salir_tabla_y_limpiar_advertencia() -> None:
     """Sale de la tabla de posiciones y limpia mensajes de advertencia.
 
     Ejecuta salir_tabla() (4x Ctrl+Shift+Tab) para volver al encabezado,
-    luego dos Enter para confirmar y limpiar advertencia de "vencimiento en el pasado".
+    luego itera _click_si_dialog_fb60() hasta 5 veces para descartar diálogos
+    SAP secuenciales (vencimiento en el pasado, período anterior, IVA, etc.)
+    clickeando 'Sí' explícitamente. Si el scripting no detecta diálogos,
+    envía 3 Enter ciegos como fallback.
 
     Returns:
         None
     """
     SAP.activar()
     SAP.salir_tabla()              # 4× Ctrl+Shift+Tab: vuelve al encabezado desde la tabla
-    SAP.activar()                  # tabla y encabezado son contextos SAP distintos; restablecer foco
-    SAP.enter()
-    time.sleep(_SLEEP_MEDIO)
     SAP.activar()
-    SAP.enter()                    # segundo Enter: limpia advertencia "vencimiento en el pasado"
     time.sleep(_SLEEP_MEDIO)
+    # Descartar advertencias SAP via Scripting (click 'Sí') — hasta 5 diálogos secuenciales
+    scripting_ok = False
+    for _ in range(5):
+        if _click_si_dialog_fb60():
+            scripting_ok = True
+            time.sleep(_SLEEP_MEDIO)
+        else:
+            break
+    if not scripting_ok:
+        # Scripting no detectó diálogos — fallback: Enter × 3 ciegos
+        for _ in range(3):
+            SAP.enter()
+            time.sleep(_SLEEP_MEDIO)
+    time.sleep(_SLEEP_LARGO)       # pausa extra para que SAP termine procesamiento
 
 
 def _llenar_pestana_pago(via_pago: str) -> None:
