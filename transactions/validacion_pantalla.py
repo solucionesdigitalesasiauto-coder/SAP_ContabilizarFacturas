@@ -2679,7 +2679,7 @@ def leer_y_validar_fb60_detalle():
 # FB60 PAGO
 # ============================================================
 
-def extraer_via_pago_fb60(img, lineas):
+def extraer_via_pago_fb60(img, lineas=None):
     """Extrae Vía pago de la pestaña Pago (crop del interior del campo).
 
     Los bboxes cubren SOLO el interior de la caja del campo (perfil de
@@ -2692,6 +2692,8 @@ def extraer_via_pago_fb60(img, lineas):
     Fallback de línea OCR: acepta solo UN carácter suelto tras la
     etiqueta (la vía de pago SAP es de 1 letra) para no capturar
     fragmentos de "Bloq.pago", que comparte la fila en pantalla.
+    `lineas` es perezoso: si no se pasa, el OCR de página completa
+    (~2-2.5s) se ejecuta SOLO si los 3 crops fallan.
     """
     bboxes = [
         (160, 469, 181, 492),
@@ -2732,6 +2734,8 @@ def extraer_via_pago_fb60(img, lineas):
         if r:
             return r
 
+    if lineas is None:
+        lineas = extraer_lineas_fb60(img)
     for l in lineas:
         if re.search(r"v[ií]a\s*pago", normalizar(l)):
             # Solo UN carácter aislado tras la etiqueta — un token más largo
@@ -2749,9 +2753,10 @@ def leer_valores_fb60_pago():
     METRICAS.reset()
     with cronometro("fb60_pago_total"):
         screenshot = capturar_ventana_sap()
-        lineas = extraer_lineas_fb60(screenshot)
+        # sin extraer_lineas_fb60 aquí — extraer_via_pago_fb60 lo ejecuta
+        # perezosamente solo si los 3 crops fallan (ahorra ~2-2.5s/doc)
         resultado = {
-            "Vía pago": extraer_via_pago_fb60(screenshot, lineas),
+            "Vía pago": extraer_via_pago_fb60(screenshot),
         }
     _log.info(METRICAS.reporte())
     return resultado
