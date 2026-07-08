@@ -416,6 +416,37 @@ def leer_portapapeles() -> str:
         return ""
 
 
+def pegar(texto: str) -> None:
+    """Pega texto en el campo activo vía portapapeles + Ctrl+V (pynput).
+
+    NO usar en campos de contraseña — SAP bloquea el pegado (Ctrl+V) ahí
+    por seguridad; el campo queda vacío aunque el portapapeles sea correcto.
+    Confirmado en producción 06/07/2026.
+
+    Args:
+        texto (str): Texto a pegar en el campo activo.
+    """
+    import pyperclip
+    pyperclip.copy(str(texto))
+    time.sleep(_SLEEP_MEDIO)
+    with _kb.pressed(Key.ctrl):
+        _kb.press('v'); _kb.release('v')
+
+
+def escribir_pynput(texto: str) -> None:
+    """Teclea texto carácter a carácter via pynput Controller.type().
+
+    Alternativa a escribir() (pyautogui.write) para campos donde símbolos
+    con Shift (+, /, etc.) se pierden — pynput es más confiable que
+    pyautogui dentro del message loop de SAP. Usar para contraseña, donde
+    además el pegado por Ctrl+V está bloqueado por SAP.
+
+    Args:
+        texto (str): Texto a escribir en el campo activo.
+    """
+    _kb.type(str(texto))
+
+
 def pegar_como_texto():
     """Lee el portapapeles y lo tipea en el campo activo (Ctrl+A + write).
     """

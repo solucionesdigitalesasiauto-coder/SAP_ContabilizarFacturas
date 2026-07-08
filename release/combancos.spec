@@ -10,6 +10,12 @@ _tess_data = [
     (f, 'tessdata') for f in _glob.glob(_os.path.join(_TESS, 'tessdata', '*.traineddata'))
 ]
 
+if not _tess_bins or not _tess_data:
+    raise RuntimeError(
+        f"Tesseract OCR no encontrado en '{_TESS}' — instálalo en la máquina de build "
+        "antes de compilar. El exe quedaría sin OCR embebido si se continúa."
+    )
+
 a = Analysis(
     ['../main.py'],
     pathex=['..', '../diagnostico'],

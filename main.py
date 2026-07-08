@@ -502,6 +502,7 @@ def llenar_credenciales():
         session.findById("wnd[0]/usr/pwdRSYST-BCODE").text = PASSWORD
         session.findById("wnd[0]").sendVKey(0)  # Enter
         _llenado_por_scripting = True
+        _log.info("Credenciales enviadas via scripting.")
         print("  Credenciales enviadas via scripting.")
     except Exception as _e:
         _log.debug(f"Scripting login no disponible ({_e}) — usando teclado.")
@@ -510,10 +511,11 @@ def llenar_credenciales():
         SAP.activar()
         SAP.campo_ctrlA(USUARIO)
         SAP.tab(1)
-        SAP.campo_ctrlA(PASSWORD)
+        SAP.escribir_pynput(PASSWORD)
         time.sleep(_SLEEP_CORTO)
         SAP.activar()
         SAP.enter()
+        _log.info("Credenciales enviadas via teclado.")
         print("  Credenciales enviadas via teclado.")
 
     time.sleep(_SLEEP_INICIO)
@@ -950,7 +952,7 @@ def main():
 
     # Verificar Tesseract antes de abrir SAP
     try:
-        from transactions.validacion_Pantalla import verificar_tesseract
+        from transactions.validacion_pantalla import verificar_tesseract
         if not verificar_tesseract():
             print("  [!] Tesseract OCR no está operativo.")
             print("      Instala Tesseract-OCR o usa el ejecutable con OCR embebido.")

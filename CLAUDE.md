@@ -295,4 +295,19 @@ El menú sobreescribe el valor del `.env` si se selecciona una opción distinta.
 
 ## Pendientes
 
-*(ninguno)*
+Confirmado. Esto es lo que quedó guardado:
+
+En memoria (project_pending_fb60_dialog.md):
+
+Los 3 bugs identificados y sus fixes aplicados
+Qué probar mañana (Caso 1 y Caso 2)
+Qué significa cada mensaje del log
+Si btnSPOP-OPTION1 no funciona → grabar con SAP Script Recorder
+En el código (transactions/fb60_kb.py) — marcas [BETA] en 4 funciones:
+
+Marca en log	Función	Qué identifica
+[BETA][HAY-POPUP]	_hay_popup_activo_fb60	Si wnd[1] existe o no
+[BETA][VFD]	_verificar_foco_datos_basicos	Valor del copiar(), si recupera foco, si pasa o falla
+[BETA][SALIR]	_salir_fb60_con_si	Cada paso: limpiar popups → F12 → confirmar Sí
+[BETA][CLICK-SI]	_click_si_dialog_fb60	Qué botones encontró (text/tooltip), cuál presionó o si usó Tab fallback
+Mañana con solo buscar [BETA] en el log se ve toda la ruta que tomó el código, sin necesidad de recordar la sesión de hoy.

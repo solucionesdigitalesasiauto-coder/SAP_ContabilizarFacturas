@@ -18,6 +18,7 @@ _BUILD_WORK  = r"C:\Temp\ComBancos_build"   # directorio de trabajo PyInstaller
 _BUILD_DIST  = r"C:\Temp\ComBancos_dist"    # directorio dist PyInstaller
 _EXE_NAME    = "ComBancos.exe"              # nombre del ejecutable generado
 _PREFIX_ZIP  = "ComBancos_v"               # prefijo del archivo ZIP de entrega
+_TESS_DIR    = r"C:\Program Files\Tesseract-OCR"  # respaldo portable incluido en el ZIP
 
 # ── Certificado de firma (compartido con gestor_amt) ─────────
 _CERT_DIR  = r"C:\Users\wquintana\OneDrive - ASIAUTO S.A\Documentos\Matriculación\Telegram\gestor_amt"
@@ -174,6 +175,11 @@ def main():
         _ok("asiauto_codesign.cer incluido")
     else:
         print("        [!] Certificado .cer no encontrado — el cliente deberá instalarlo manualmente")
+
+    if not os.path.exists(_TESS_DIR):
+        _error(f"Tesseract-OCR no encontrado en {_TESS_DIR} — no se puede armar el respaldo portable.")
+    shutil.copytree(_TESS_DIR, os.path.join(release_dir, "Tesseract-OCR"))
+    _ok("Tesseract-OCR copiado (respaldo portable, por si el exe no lo extrae)")
 
     _ok("Carpeta de entrega lista")
 

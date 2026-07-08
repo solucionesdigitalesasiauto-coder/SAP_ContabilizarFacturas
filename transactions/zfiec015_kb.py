@@ -116,11 +116,14 @@ def _validar_campos_zfiec(proveedor, fecha_desde, fecha_hasta, sociedad, tipo_do
         esperados = json.load(f)
     _log.info("Validando campos ZFIEC015 por OCR...")
     try:
-        from transactions.validacion_Pantalla import leer_valores_zfiec015
+        from transactions.validacion_pantalla import leer_valores_zfiec015
     except (ImportError, SystemExit) as exc:
         _log.warning("Validación ZFIEC015 omitida — %s", exc)
         return
     detectados = leer_valores_zfiec015()
+    _log.info("Valores OCR detectados ZFIEC015:")
+    for k, v in detectados.items():
+        _log.info("  OCR %-35s %s", k, repr(v) if v is not None else "N/D")
     # Solo comparar campos que el OCR de ZFIEC015 puede detectar
     # (valores_bancos.json contiene también campos de FB60 como "Texto Cabecera")
     diferencias = [
@@ -132,9 +135,7 @@ def _validar_campos_zfiec(proveedor, fecha_desde, fecha_hasta, sociedad, tipo_do
         msg = "Validación ZFIEC015 fallida:\n  " + "\n  ".join(diferencias)
         _log.error(msg)
         raise RuntimeError(msg)
-    _log.info("Validación OCR ZFIEC015 OK. Valores detectados:")
-    for k, v in detectados.items():
-        _log.info("  OCR %-35s %s", k, repr(v) if v is not None else "N/D")
+    _log.info("Validación OCR ZFIEC015 OK.")
     print("  ✓ Validación ZFIEC015 OK")
 
 

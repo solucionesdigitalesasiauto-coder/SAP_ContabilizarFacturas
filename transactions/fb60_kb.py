@@ -72,7 +72,8 @@ def _hay_popup_activo_fb60() -> bool:
     try:
         import win32com.client
         sap     = win32com.client.GetObject("SAPGUI")
-        session = sap.GetScriptingEngine().Children(0).Children(0)
+        # GetScriptingEngine SIN paréntesis — propiedad COM, no método
+        session = sap.GetScriptingEngine.Children(0).Children(0)
         session.findById("wnd[1]")   # lanza excepción si no existe
         _log.info("wnd[1] DETECTADO — hay diálogo activo")
         return True
@@ -135,10 +136,10 @@ def _copiar_acreedor_seguro() -> str:
 
 
 def _verificar_foco_datos_basicos(proveedor: str) -> None:
-    """Verifica el foco en Datos básicos ANTES del OCR y valida por OCR si el foco es correcto.
+    """Verifica el foco en Datos básicos ANTES del OCR.
 
     1. Copia el campo activo (debe ser Acreedor) con Ctrl+A+C y compara con el proveedor.
-    2. Si coincide → llama al OCR completo de la pestaña Datos básicos.
+    2. Si coincide → retorna (el OCR se ejecuta por separado en el llamador).
     3. Si no coincide → foco interrumpido → llama _salir_fb60_con_si() y lanza
        ValidacionFB60Error sin esperar el OCR lento (~80 s).
 
@@ -159,8 +160,7 @@ def _verificar_foco_datos_basicos(proveedor: str) -> None:
         _log.info("copiar() tras reintento → %r", acreedor_actual)
 
     if acreedor_actual == proveedor.strip():
-        _log.info("Acreedor OK: %r — procediendo al OCR", acreedor_actual)
-        _validar_pantallaOCR_fb60()
+        _log.info("Acreedor OK: %r", acreedor_actual)
         return
 
     _log.error(
@@ -185,9 +185,19 @@ def _click_si_dialog_fb60() -> bool:
     # 1. SAP GUI Scripting (confiable para controles SAP nativos — mismo backend que ZFIEC015)
     try:
         import win32com.client
-        sap = win32com.client.GetObject("SAPGUI")
-        eng = sap.GetScriptingEngine()
-        session = eng.Children(0).Children(0)
+        session = None
+        for _intento_conn in range(2):     # reintento corto: "member not found" transitorio tras ráfaga de teclas
+            try:
+                sap = win32com.client.GetObject("SAPGUI")
+                # SIN paréntesis — propiedad COM; con () da "member not found"
+                eng = sap.GetScriptingEngine
+                session = eng.Children(0).Children(0)
+                break
+            except Exception as _e_conn:
+                _log.warning("sesión SAP Scripting no disponible (intento %d): %s", _intento_conn + 1, _e_conn)
+                time.sleep(_SLEEP_MICRO)
+        if session is None:
+            raise RuntimeError("sesión SAP Scripting no disponible tras reintentos")
         try:
             session.findById("wnd[1]")   # lanza excepción si no hay diálogo
         except Exception:
@@ -250,26 +260,11 @@ def _click_si_dialog_fb60() -> bool:
     except Exception as e:
         _log.warning("SAP Scripting no disponible: %s", e)
 
-    # 2. pywinauto UIA (fallback)
-    try:
-        from pywinauto import Application
-        app = Application(backend="uia").connect(title_re=".*Registrar factura.*", timeout=0.3)
-        win = app.window(title_re=".*Registrar factura.*")
-        for ctrl_type in ("Button", "Hyperlink", "ListItem"):
-            for titulo in ("Sí", "Si", "SÍ", "SI", "Yes", "Ja"):
-                try:
-                    btn = win.child_window(title=titulo, control_type=ctrl_type)
-                    if btn.exists(timeout=0.2):
-                        btn.click_input()
-                        _log.info("pywinauto UIA: 'Sí' (%s / %r)", ctrl_type, titulo)
-                        time.sleep(_SLEEP_MEDIO)
-                        return True
-                except Exception:
-                    continue
-    except Exception:
-        pass
-
-    return False   # no se detectó diálogo activo
+    # Sin fallback pywinauto UIA: SAP no expone los botones de diálogo por UIA
+    # (verificado 07/07/2026 — solo ~25 controles, ninguno de popup) y el escaneo
+    # costaba ~10s mudos por llamada. Si el scripting no ve el diálogo, se retorna
+    # False rápido y el caller usa su fallback de teclado (Enter/Tab+Enter).
+    return False
 
 
 def _confirmar_abandon_fb60(timeout: float = _TIMEOUT_POPUP_ABANDON) -> bool:
@@ -363,7 +358,7 @@ def _validar_pantallaOCR_fb60() -> None:
     lo captura para saltar este documento y continuar con el siguiente.
     """
     try:
-        from transactions.validacion_Pantalla import leer_y_validar_fb60
+        from transactions.validacion_pantalla import leer_y_validar_fb60
     except (ImportError, Exception) as exc:
         _log.error("Validación OCR FB60 no disponible — %s", exc)
         print(f"  [!] OCR no operativo — abortando ejecución")
@@ -385,7 +380,7 @@ def _validar_pantallaOCR_fb60() -> None:
 def _validar_pantalla_detalle_fb60() -> None:
     """Valida por OCR que Txt.cabec. en la pestaña Detalle coincide con el valor esperado."""
     try:
-        from transactions.validacion_Pantalla import leer_y_validar_fb60_detalle
+        from transactions.validacion_pantalla import leer_y_validar_fb60_detalle
     except (ImportError, Exception) as exc:
         _log.error("Validación OCR FB60 Detalle no disponible — %s", exc)
         print(f"  [!] OCR no operativo — abortando ejecución")
@@ -474,14 +469,22 @@ def registrar_factura(banco: dict) -> dict:
     t = _t("salir_tabla ✓", t)
     time.sleep(_SLEEP_RETRY_FOCO)
 
-    # Verificación de foco (Acreedor) + OCR — Datos básicos
-    _verificar_foco_datos_basicos(proveedor)
-    t = _t("verificar_datos_basicos ✓", t)
+    # Verificación de foco (Acreedor) — Datos básicos
+    #_verificar_foco_datos_basicos(proveedor)
+    #t = _t("verificar_foco_datos_basicos ✓", t)
+
+    # OCR — Datos básicos (separado de la verificación de foco)
+    _validar_pantallaOCR_fb60()
+    t = _t("validacion_ocr_datos_basicos ✓", t)
 
     # Pestaña Pago — Vía pago
     _llenar_pestana_pago(via_pago)
     t = _t(f"pestana_pago ← {via_pago!r}", t)
     time.sleep(_SLEEP_MEDIO)
+
+    # Validación OCR — Vía pago en pestaña Pago
+    _validar_pantalla_pago_fb60()
+    t = _t("validacion_ocr_pago ✓", t)
 
     # Pestaña Detalle — Txt.cabec.
     _llenar_pestana_detalle(texto_cab)
@@ -645,11 +648,15 @@ def _llenar_resto_tabla(texto_com: str, centro_costo: str) -> None:
 def _salir_tabla_y_limpiar_advertencia() -> None:
     """Sale de la tabla de posiciones y limpia mensajes de advertencia.
 
-    Ejecuta salir_tabla() (4x Ctrl+Shift+Tab) para volver al encabezado,
-    luego itera _click_si_dialog_fb60() hasta 5 veces para descartar diálogos
-    SAP secuenciales (vencimiento en el pasado, período anterior, IVA, etc.)
-    clickeando 'Sí' explícitamente. Si el scripting no detecta diálogos,
-    envía 3 Enter ciegos como fallback.
+    Ejecuta salir_tabla() (4x Ctrl+Shift+Tab) para volver al encabezado
+    (foco en Acreedor) y envía 3 Enter inmediatos para descartar las
+    advertencias SAP secuenciales (vencimiento en el pasado, período
+    anterior, IVA, etc.).
+
+    Los 3 Enter van directo, sin intentar scripting ni UIA antes:
+    el servidor PS4 bloquea SAP Scripting (DisabledByServer=True) y el
+    escaneo pywinauto UIA tardaba ~10s sin encontrar botones — era la
+    pausa muda en Acreedor antes de los Enter (verificado 07/07/2026).
 
     Returns:
         None
@@ -658,20 +665,37 @@ def _salir_tabla_y_limpiar_advertencia() -> None:
     SAP.salir_tabla()              # 4× Ctrl+Shift+Tab: vuelve al encabezado desde la tabla
     SAP.activar()
     time.sleep(_SLEEP_MEDIO)
-    # Descartar advertencias SAP via Scripting (click 'Sí') — hasta 5 diálogos secuenciales
-    scripting_ok = False
-    for _ in range(5):
-        if _click_si_dialog_fb60():
-            scripting_ok = True
-            time.sleep(_SLEEP_MEDIO)
-        else:
-            break
-    if not scripting_ok:
-        # Scripting no detectó diálogos — fallback: Enter × 3 ciegos
-        for _ in range(3):
-            SAP.enter()
-            time.sleep(_SLEEP_MEDIO)
+    for i in range(1, 4):
+        _log.info("limpiar_advertencia: Enter %d/3", i)
+        SAP.enter()
+        time.sleep(_SLEEP_MEDIO)
     time.sleep(_SLEEP_LARGO)       # pausa extra para que SAP termine procesamiento
+
+
+def _validar_pantalla_pago_fb60() -> None:
+    """Valida por OCR que Vía pago en la pestaña Pago coincide con VIA_PAGO (.env).
+
+    OCR únicamente — SAP GUI Scripting no puede leer campos en este ambiente:
+    el servidor PS4 lo tiene deshabilitado (DisabledByServer=True, 07/07/2026).
+    """
+    try:
+        from transactions.validacion_pantalla import leer_y_validar_fb60_pago
+    except (ImportError, Exception) as exc:
+        _log.error("Validación OCR FB60 Pago no disponible — %s", exc)
+        print(f"  [!] OCR no operativo — abortando ejecución")
+        import sys; sys.exit(1)
+    resultado = leer_y_validar_fb60_pago()
+    if not resultado["valido"]:
+        difs = resultado["diferencias"]
+        msg = "Validación FB60 Pago fallida:\n  " + "\n  ".join(f"{k}: {v}" for k, v in difs.items())
+        _log.error(msg)
+        _cerrar_fb60_forzado()
+        raise ValidacionFB60Error(msg)
+    detectados = resultado.get("detectados", {})
+    _log.info("Validación OCR FB60 Pago OK. Valores detectados:")
+    for k, v in detectados.items():
+        _log.info("  OCR %-25s %s", k, repr(v) if v is not None else "N/D")
+    print("  ✓ Validación FB60 Pago OK")
 
 
 def _llenar_pestana_pago(via_pago: str) -> None:
