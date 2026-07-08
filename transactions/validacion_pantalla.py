@@ -2720,7 +2720,8 @@ def extraer_via_pago_fb60(img, lineas):
         if tinta < _MIN_PIXELES_TINTA:
             _log.info("Vía pago bbox %d: %d px de tinta — campo vacío", idx, tinta)
             return None
-        txt = ocr_crop_fb60(img, bbox, modo="codigo", nombre_debug=f"via_pago_{idx}")
+        # nombre_debug=f"via_pago_{idx}" — descomentar para recalibrar bboxes
+        txt = ocr_crop_fb60(img, bbox, modo="codigo")
         return _valor_sin_etiqueta(txt) if txt else None
 
     res = ocr_paralelo(
