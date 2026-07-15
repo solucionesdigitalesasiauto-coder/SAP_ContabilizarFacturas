@@ -27,6 +27,9 @@ _SLEEP_MEDIO = 0.6   # entre campos / pasos SAP
 _SLEEP_LARGO = 0.9   # tabla / salidas lentas
 _SLEEP_POPUP = 2.0   # espera popup Información tras Contabilizar
 _SLEEP_RETRY_FOCO = 2.0  # espera para que SAP asiente el foco antes/durante _verificar_foco_datos_basicos
+_SLEEP_PRE_OCR_BASICO = 0.0  # espera extra antes del OCR de Datos básicos — da tiempo a SAP a redibujar Importe/Calc.impuestos tras salir de la tabla
+_SLEEP_POST_NORMALIZAR_POS = 1.2  # espera tras Ctrl+Shift+Tab en _posicion_normal — da tiempo a SAP a asentar el foco antes de pegar Cta.mayor (evita que el paste no registre y desalinee toda la fila)
+_SLEEP_POST_TAB_PEGAR = 1.0  # espera tras Tab/Down antes de _pegar() — confirmado 14/07/2026 en Importe/Texto que _SLEEP_MEDIO a veces no alcanza y el paste no registra; homologado 15/07/2026 a Cta.mayor/Vía pago/Txt.cabec. (mismo patrón Tab→pegar)
 
 _MAX_REINTENTOS_CLIP  = 5    # reintentos de verificación del portapapeles
 _TIMEOUT_PYWINAUTO    = 5    # timeout pywinauto connect a ventana FB60
@@ -114,11 +117,10 @@ def _salir_fb60_con_si() -> None:
     SAP.f12()
     time.sleep(2.0)                                   # esperar popup de abandono
 
-    # 3. Confirmar 'Sí' en popup de abandono ("Fin tratamiento") — "No" tiene el foco
-    #    por defecto, 1 Tab mueve a "Sí", Enter confirma.
-    _log.info("Tab+Enter para confirmar Sí en popup de abandono")
-    SAP.tecla('tab')
-    time.sleep(_SLEEP_MEDIO)
+    # 3. Confirmar 'Sí' en popup de abandono ("Fin tratamiento") — "Sí" tiene el foco
+    #    por defecto (mismo popup que _contabilizar_o_cancelar) — NO usar Tab antes:
+    #    confirmado 14/07/2026 que el Tab movía el foco a "No" y lo confirmaba.
+    _log.info("Enter para confirmar Sí en popup de abandono (foco ya en Sí)")
     SAP.tecla('enter')
     _log.info("FIN — FB60 debería estar cerrado")
     time.sleep(_SLEEP_LARGO)
@@ -319,14 +321,27 @@ def _cerrar_fb60_forzado(max_intentos: int = 5) -> bool:
       1. _click_si_dialog_fb60() × N — descarta cualquier diálogo Sí/No activo
          (período, vencimiento, etc.) clickeando 'Sí' via SAP Scripting antes del F12.
          Esto evita que F12 sea interceptado por el diálogo y actúe como 'No'.
-      2. F12 — muestra popup de abandono (Sí tiene foco por defecto).
-      3. Enter — confirma 'Sí' en el popup de abandono.
+      2. F12 — muestra popup de abandono.
+      3. Tab + Enter — confirma 'Sí' en el popup de abandono.
+
+    Nota: en esta ruta (tras fallo de validación OCR) el popup "Fin tratamiento"
+    llega con el foco por defecto en "No" — confirmado 14/07/2026 con captura
+    de pantalla real. Requiere 1 Tab antes del Enter para moverse a "Sí".
+    Distinto del caso de _contabilizar_o_cancelar()/_salir_fb60_con_si(), donde
+    "Sí" ya tiene el foco — el default parece depender del contexto previo.
 
     Returns:
         bool: True si logró salir de FB60, False si agotó los intentos.
     """
     for intento in range(1, max_intentos + 1):
-        SAP.activar(_TITULO_FB60)
+        try:
+            SAP.activar(_TITULO_FB60)
+        except RuntimeError:
+            # Ventana FB60 ya no existe — el intento anterior (Tab+Enter) sí
+            # cerró FB60 realmente; el "sigue abierto" del check previo fue
+            # una lectura de título tomada durante la transición de cierre.
+            _log.info("FB60 ya no existe al iniciar intento %d — se considera cerrado", intento)
+            return True
         time.sleep(_SLEEP_MEDIO)
         # Paso 1: limpiar diálogos bloqueantes ANTES del F12 (click 'Sí' vía SAP Scripting)
         for _ in range(4):
@@ -336,8 +351,10 @@ def _cerrar_fb60_forzado(max_intentos: int = 5) -> bool:
         # Paso 2: F12 para el popup de abandono (ya sin diálogos que lo intercepten)
         SAP.f12()
         time.sleep(2.0)             # popup de abandono puede tardar en aparecer
-        # Paso 3: Enter en el popup de abandono (Sí tiene foco por defecto)
+        # Paso 3: Tab + Enter en el popup de abandono ("No" tiene el foco por defecto aquí)
         if _TITULO_FB60.lower() in SAP.titulo_actual().lower():
+            SAP.tab(1)
+            time.sleep(_SLEEP_MICRO)
             SAP.enter()
             time.sleep(_SLEEP_LARGO)
         if _TITULO_FB60.lower() not in SAP.titulo_actual().lower():
@@ -349,13 +366,16 @@ def _cerrar_fb60_forzado(max_intentos: int = 5) -> bool:
     return False
 
 
-def _validar_pantallaOCR_fb60() -> None:
+def _validar_basico_OCR_fb60() -> dict:
     """Valida por OCR los campos de Datos básicos FB60 antes de cambiar de pestaña.
 
     Importa leer_y_validar_fb60 en tiempo de ejecución para evitar importación
     circular y para manejar graciosamente la ausencia de Tesseract.
     Si falla: cancela el doc con F12 y lanza ValidacionFB60Error — el caller
     lo captura para saltar este documento y continuar con el siguiente.
+
+    Returns:
+        dict: Valores detectados por OCR (para incluir en el correo de resumen).
     """
     try:
         from transactions.validacion_pantalla import leer_y_validar_fb60
@@ -375,10 +395,15 @@ def _validar_pantallaOCR_fb60() -> None:
     for k, v in detectados.items():
         _log.info("  OCR %-25s %s", k, repr(v) if v is not None else "N/D")
     print("  ✓ Validación FB60 OK")
+    return detectados
 
 
-def _validar_pantalla_detalle_fb60() -> None:
-    """Valida por OCR que Txt.cabec. en la pestaña Detalle coincide con el valor esperado."""
+def _validar_pantalla_detalle_fb60() -> dict:
+    """Valida por OCR que Txt.cabec. en la pestaña Detalle coincide con el valor esperado.
+
+    Returns:
+        dict: Valores detectados por OCR (para incluir en el correo de resumen).
+    """
     try:
         from transactions.validacion_pantalla import leer_y_validar_fb60_detalle
     except (ImportError, Exception) as exc:
@@ -397,6 +422,7 @@ def _validar_pantalla_detalle_fb60() -> None:
     for k, v in detectados.items():
         _log.info("  OCR %-25s %s", k, repr(v) if v is not None else "N/D")
     print("  ✓ Validación FB60 Detalle OK")
+    return detectados
 
 
 
@@ -420,6 +446,9 @@ def registrar_factura(banco: dict) -> dict:
             - fecha (str): Fecha de factura capturada del formulario.
             - cuenta_mayor (str): Cuenta mayor usada.
             - centro_costo (str): Centro de costo usado.
+            - ocr_basico (dict): Valores detectados por OCR en Datos básicos.
+            - ocr_pago (dict): Valores detectados por OCR en pestaña Pago.
+            - ocr_detalle (dict): Valores detectados por OCR en pestaña Detalle.
     """
     # Leer parámetros contables del banco y del .env
     cuenta_mayor = banco.get("cuenta_mayor", "")
@@ -474,7 +503,8 @@ def registrar_factura(banco: dict) -> dict:
     #t = _t("verificar_foco_datos_basicos ✓", t)
 
     # OCR — Datos básicos (separado de la verificación de foco)
-    _validar_pantallaOCR_fb60()
+    time.sleep(_SLEEP_PRE_OCR_BASICO)
+    ocr_basico = _validar_basico_OCR_fb60()
     t = _t("validacion_ocr_datos_basicos ✓", t)
 
     # Pestaña Pago — Vía pago
@@ -483,7 +513,7 @@ def registrar_factura(banco: dict) -> dict:
     time.sleep(_SLEEP_MEDIO)
 
     # Validación OCR — Vía pago en pestaña Pago
-    _validar_pantalla_pago_fb60()
+    ocr_pago = _validar_pantalla_pago_fb60()
     t = _t("validacion_ocr_pago ✓", t)
 
     # Pestaña Detalle — Txt.cabec.
@@ -492,7 +522,7 @@ def registrar_factura(banco: dict) -> dict:
     time.sleep(_SLEEP_MEDIO)
 
     # Validación OCR — Txt.cabec. en pestaña Detalle
-    _validar_pantalla_detalle_fb60()
+    ocr_detalle = _validar_pantalla_detalle_fb60()
     t = _t("validacion_ocr_detalle ✓", t)
 
     nro = _contabilizar_o_cancelar(fecha_capturada)
@@ -502,6 +532,9 @@ def registrar_factura(banco: dict) -> dict:
         "fecha":        fecha_capturada,
         "cuenta_mayor": cuenta_mayor,
         "centro_costo": centro_costo,
+        "ocr_basico":   ocr_basico,
+        "ocr_pago":     ocr_pago,
+        "ocr_detalle":  ocr_detalle,
     }
 
 
@@ -606,9 +639,16 @@ def _posicion_normal(cuenta_mayor: str, texto_com: str, centro_costo: str) -> No
     time.sleep(_SLEEP_MEDIO)
     with _kbd.pressed(_Key.ctrl, _Key.shift):   # Ctrl+Shift+Tab: normaliza posición en tabla
         _kbd.press(_Key.tab); _kbd.release(_Key.tab)
-    time.sleep(_SLEEP_MEDIO)
+    # Espera subida de _SLEEP_MEDIO a _SLEEP_POST_NORMALIZAR_POS (14/07/2026):
+    # confirmado en producción que Cta.mayor a veces queda vacío (el paste no
+    # registra) cuando SAP no ha asentado el foco tras este Ctrl+Shift+Tab —
+    # eso desalinea también Texto y Centro coste, leídos por OCR desde la
+    # columna equivocada. No se verifica con copiar()/Ctrl+A: eso selecciona
+    # FILAS dentro de la tabla en vez de copiar el texto del campo (riesgo
+    # documentado). Solución más segura: solo dar más tiempo antes de pegar.
+    time.sleep(_SLEEP_POST_NORMALIZAR_POS)
     SAP.tab(2)                                  # → Cta.mayor
-    time.sleep(_SLEEP_MEDIO)
+    time.sleep(_SLEEP_POST_TAB_PEGAR)           # homologado 15/07/2026 — mismo patrón Tab→pegar de Importe/Texto
     _pegar(cuenta_mayor)
     time.sleep(_SLEEP_MEDIO)
     _llenar_resto_tabla(texto_com, centro_costo)
@@ -619,8 +659,12 @@ def _llenar_resto_tabla(texto_com: str, centro_costo: str) -> None:
 
     Continúa desde Cta.mayor con tabulación: Importe (_TAB_POS_IMPORTE tabs),
     Texto (_TAB_POS_TEXTO tabs), Centro Costo (_TAB_POS_CCOSTO tabs).
-    Cada campo espera _SLEEP_MEDIO tras el tab antes de activar()/escribir()
-    para que el foco se asiente en máquinas rápidas (Ctrl+V llega a campo activo).
+
+    Importe y Texto usan _SLEEP_POST_TAB_PEGAR (subido de _SLEEP_MEDIO,
+    14/07/2026): confirmado en producción que el paste ("*" o texto) a veces
+    no registraba tras el Tab — Importe quedaba en '0.00' o Texto vacío/'-'.
+    Centro Costo usa escribir() directo (no paste) — no mostró el problema,
+    se deja con _SLEEP_MEDIO sin cambios.
 
     Args:
         texto_com (str): Texto de la posición (ej. "comision banco del austro").
@@ -628,13 +672,13 @@ def _llenar_resto_tabla(texto_com: str, centro_costo: str) -> None:
 
     """
     SAP.tab(_TAB_POS_IMPORTE)
-    time.sleep(_SLEEP_MEDIO)
+    time.sleep(_SLEEP_POST_TAB_PEGAR)
     SAP.activar()                  # foco puede perderse durante el sleep en máquinas rápidas
     _pegar(_IMPORTE_AUTO)          # "*" = SAP calcula el total automáticamente
     time.sleep(_SLEEP_MEDIO)
 
     SAP.tab(_TAB_POS_TEXTO)
-    time.sleep(_SLEEP_MEDIO)
+    time.sleep(_SLEEP_POST_TAB_PEGAR)
     SAP.activar()
     _pegar(texto_com)
     time.sleep(_SLEEP_MEDIO)
@@ -672,11 +716,14 @@ def _salir_tabla_y_limpiar_advertencia() -> None:
     time.sleep(_SLEEP_LARGO)       # pausa extra para que SAP termine procesamiento
 
 
-def _validar_pantalla_pago_fb60() -> None:
+def _validar_pantalla_pago_fb60() -> dict:
     """Valida por OCR que Vía pago en la pestaña Pago coincide con VIA_PAGO (.env).
 
     OCR únicamente — SAP GUI Scripting no puede leer campos en este ambiente:
     el servidor PS4 lo tiene deshabilitado (DisabledByServer=True, 07/07/2026).
+
+    Returns:
+        dict: Valores detectados por OCR (para incluir en el correo de resumen).
     """
     try:
         from transactions.validacion_pantalla import leer_y_validar_fb60_pago
@@ -696,6 +743,7 @@ def _validar_pantalla_pago_fb60() -> None:
     for k, v in detectados.items():
         _log.info("  OCR %-25s %s", k, repr(v) if v is not None else "N/D")
     print("  ✓ Validación FB60 Pago OK")
+    return detectados
 
 
 def _llenar_pestana_pago(via_pago: str) -> None:
@@ -719,9 +767,10 @@ def _llenar_pestana_pago(via_pago: str) -> None:
     SAP.tecla('down')
     time.sleep(_SLEEP_MEDIO)
     SAP.tecla('down')
-    time.sleep(_SLEEP_MEDIO)
+    time.sleep(_SLEEP_POST_TAB_PEGAR)           # homologado 15/07/2026 — mismo patrón Tab→pegar de Importe/Texto
     _pegar(via_pago)
     time.sleep(_SLEEP_MEDIO)
+    SAP.tecla('down')
 
 
 def _llenar_pestana_detalle(texto_cab: str) -> None:
@@ -742,10 +791,13 @@ def _llenar_pestana_detalle(texto_cab: str) -> None:
     time.sleep(_SLEEP_MEDIO)
     SAP.activar()
     SAP.tab(1)                     # → campo Txt.cabec.
+    time.sleep(_SLEEP_POST_TAB_PEGAR)  # homologado 15/07/2026 — antes sin espera, mismo riesgo que Importe/Texto/Cta.mayor
     _pegar(texto_cab)
     time.sleep(_SLEEP_MEDIO)
     SAP.enter()                    # confirma el campo antes de salir de pestaña; sin esto SAP puede descartarlo
     SAP.activar()
+    time.sleep(_SLEEP_MEDIO)
+    SAP.tab(1)
     time.sleep(_SLEEP_MEDIO)
 
 def _contabilizar_o_cancelar(fecha_capturada: str) -> str:
@@ -769,8 +821,8 @@ def _contabilizar(fecha_capturada: str) -> str:
     Returns:
         str: Número de documento SAP, o "OK" si no se pudo extraer.
     """
-    SAP.tab(1)                     # saca el campo activo de edit mode; sin este tab SAP ignora el clic
-    time.sleep(_SLEEP_MEDIO)
+    #SAP.tab(1)                     # saca el campo activo de edit mode; sin este tab SAP ignora el clic
+    #time.sleep(_SLEEP_MEDIO)
     try:
         from pywinauto import Application
         # "Registrar factura de acreedor" es el título completo en ventana maximizada

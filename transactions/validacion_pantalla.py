@@ -1841,15 +1841,30 @@ def texto_fb60_unido(lineas):
     return txt.strip()
 
 
-def normalizar_decimal(txt):
-    """Normaliza importes SAP/OCR a formato 1234.56 (original)."""
+def normalizar_decimal(txt, permitir_1_decimal=False):
+    """Normaliza importes SAP/OCR a formato 1234.56 (original).
+
+    Args:
+        permitir_1_decimal: si True, acepta también 1 solo dígito decimal
+            (ej. '46.0' -> '46.00'). SAP a veces muestra un solo decimal
+            (confirmado 14/07/2026). Debe activarse SOLO para configs con
+            whitelist de dígitos (psm 7/8/13) — con psm 11 (sin whitelist)
+            el cursor parpadeante se lee como dígito falso y se obtiene
+            un decimal completo pero INVENTADO (ej. '46.08'), que un
+            regex de 1-2 dígitos aceptaría igual sin poder distinguirlo
+            del real. Con whitelist restringido a dígitos, ese falso
+            positivo de 2 decimales completos no se produce.
+    """
     if not txt:
         return None
 
     txt = limpiar(txt)
     txt = txt.replace("O", "0").replace("o", "0").replace(" ", "")
 
-    m = re.search(r"-?\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|-?\d+[.,]\d{2}", txt)
+    n_dec = "1,2" if permitir_1_decimal else "2"
+    m = re.search(
+        r"-?\d{1,3}(?:[.,]\d{3})*[.,]\d{%s}|-?\d+[.,]\d{%s}" % (n_dec, n_dec), txt
+    )
     if not m:
         return None
 
@@ -1903,7 +1918,6 @@ def ocr_decimal_preciso_fb60(img, bbox, nombre_debug=None,
             pass
 
     configs = [
-        "--oem 3 --psm 7 -c tessedit_char_whitelist=0123456789.,Oo",
         "--oem 3 --psm 8 -c tessedit_char_whitelist=0123456789.,Oo",
         "--oem 3 --psm 13 -c tessedit_char_whitelist=0123456789.,Oo",
         # psm 11 (texto disperso) sin whitelist: psm 7 trunca antes de los
@@ -1911,6 +1925,10 @@ def ocr_decimal_preciso_fb60(img, bbox, nombre_debug=None,
         # después del número (confirmado 06/07/2026, ej. '44455.09' leído
         # como '44455.'). normalizar_decimal() limpia el ruido sobrante.
         "--oem 3 --psm 11",
+        # psm 7 al final: confirmado 14/07/2026 que agrega un "2" espurio
+        # en recortes con label a la izquierda del campo (ej. '0.52' leído
+        # como '20.52' o '220.52') — psm 8/13/11 leen el mismo recorte bien.
+        "--oem 3 --psm 7 -c tessedit_char_whitelist=0123456789.,Oo",
     ]
 
     def _valida(txt):
@@ -1946,6 +1964,33 @@ def ocr_decimal_preciso_fb60(img, bbox, nombre_debug=None,
         if CONFIG.get("salida_temprana", True) and len(resultados) >= 2:
             if resultados.count(resultados[-1]) >= 2:
                 return resultados
+
+    if resultados:
+        return resultados
+
+    # Fallback: SAP a veces muestra solo 1 decimal (ej. '46.0' en vez de
+    # '46.00' — confirmado 14/07/2026, cursor parpadeante tapando el 2º
+    # dígito). Se activa SOLO si la extracción estricta (2 decimales) no
+    # produjo NINGÚN candidato en ningún bbox/variante/config — para no
+    # contaminar el voto por mayoría normal con lecturas de menor precisión.
+    # Exige que ≥2 configs coincidan entre sí sobre variante 0 antes de
+    # aceptar un valor — un solo testigo no basta (evita aceptar una
+    # lectura corta y equivocada, ej. '0.52' mal leído como '0.0').
+    crop0 = next(variantes_reintento(crop))
+    relajados = []
+    for cfg in configs:
+        txt, _conf = ocr_tesseract_conf(crop0, lang="eng", config=cfg)
+        v = normalizar_decimal(txt, permitir_1_decimal=True) if txt else None
+        if v:
+            relajados.append(v)
+    conteo_relajado = {}
+    for v in relajados:
+        conteo_relajado[v] = conteo_relajado.get(v, 0) + 1
+    if conteo_relajado:
+        top_val, top_n = sorted(conteo_relajado.items(), key=lambda x: x[1], reverse=True)[0]
+        if top_n >= 2:
+            _log.info("[DEBUG] Importe fallback 1-decimal aceptado: %s (%s)", top_val, conteo_relajado)
+            return [top_val]
 
     return resultados
 
@@ -2083,9 +2128,8 @@ def extraer_importe_fb60_v2(img, lineas):
     lock = threading.Lock()
 
     def _tarea(bbox, idx):
-        vals = ocr_decimal_preciso_fb60(
-            img, bbox, nombre_debug=f"importe_crop_{idx}"
-        )
+        # nombre_debug=f"importe_crop_{idx}" — descomentar para recalibrar bboxes
+        vals = ocr_decimal_preciso_fb60(img, bbox)
         with lock:
             candidatos.extend(vals)
         return vals or None
@@ -2142,6 +2186,15 @@ def extraer_calc_impuestos_fb60_v2(img, lineas):
     # El contorno del checkbox SAP es azul incluso vacío — hay que ubicar
     # ese borde por los propios píxeles azules y analizar SOLO el interior
     # estricto (más adentro que el borde), donde va la tilde si está marcado.
+    #
+    # Se probó ampliar la detección a gris/negro además de azul (14/07/2026,
+    # tras ver un checkbox marcado sin ningún píxel azul) pero se revirtió
+    # el mismo día: en producción dio falso positivo con ratio alto
+    # (0.18) en un checkbox confirmado VACÍO — el sombreado/borde del
+    # control vacío también es oscuro y contamina la detección. Un falso
+    # positivo aquí (dice marcado sin estarlo) es más peligroso que un
+    # falso negativo (bloquea el doc para revisión manual), así que se
+    # mantiene SOLO azul aunque implique fallar en el caso gris raro.
     if _HAS_NUMPY:
         arr_full = np.asarray(crop_img, dtype=np.int16)
         mask_full = (arr_full[..., 2] > arr_full[..., 0] + 40) & (arr_full[..., 2] > 100)
@@ -2151,8 +2204,14 @@ def extraer_calc_impuestos_fb60_v2(img, lineas):
             interior_img = crop_img
         else:
             y0, y1b, x0, x1b = int(ys.min()), int(ys.max()), int(xs.min()), int(xs.max())
-            iy = max(2, int((y1b - y0) * 0.2))
-            ix = max(2, int((x1b - x0) * 0.2))
+            # Margen mínimo subido de 2px a 6px (14/07/2026): confirmado en
+            # producción que un checkbox VACÍO dio falso positivo (60/256
+            # azules, 23%) — el margen de 20%/2px no alcanzaba a excluir el
+            # borde (posible anillo de foco azul, más grueso que el borde
+            # simple). Un margen insuficiente aquí es peligroso: prioriza
+            # excluir de más antes que contar borde como tilde.
+            iy = max(6, int((y1b - y0) * 0.3))
+            ix = max(6, int((x1b - x0) * 0.3))
             yi0, yi1 = y0 + iy, y1b - iy
             xi0, xi1 = x0 + ix, x1b - ix
             if yi1 <= yi0 or xi1 <= xi0:
@@ -2177,16 +2236,16 @@ def extraer_calc_impuestos_fb60_v2(img, lineas):
     if not total:
         return None
 
-    try:
-        crop_img.save(str(_BASE_DIR / "debug_checkbox.png"))
-        interior_img.save(str(_BASE_DIR / "debug_checkbox_interior.png"))
-    except Exception:
-        pass
+    # crop_img.save(...) / interior_img.save(...) — descomentar para recalibrar margen/umbral
     _log.info("[DEBUG] Calc.impuestos interior=%s azules=%d/%d (%.4f)",
               interior_img.size, azules, total, azules / total)
 
-    # Tilde SAP es azul — B >> R indica checkbox marcado (criterio original)
-    return (azules / total) > 0.01
+    # Tilde SAP es azul — B >> R indica checkbox marcado (criterio original).
+    # Umbral subido de 0.01 a 0.08 (14/07/2026) — capa extra de seguridad
+    # junto con el margen más grande: los casos CONFIRMADOS marcados en
+    # producción dieron ratios 0.18-0.24, muy por encima; un checkbox vacío
+    # con fuga de borde debería quedar ahora por debajo de 0.08.
+    return (azules / total) > 0.08
 
 
 def extraer_combo_b2_fb60_v2(img, lineas):
@@ -2237,9 +2296,8 @@ def extraer_importe_moneda_doc_fb60(img, lineas, importe_referencia=None):
         # usa ocr_con_confianza (sin el ajuste de confianza de la variante 0)
         # y podía sumar un voto erróneo que contaminaba el voto por mayoría
         # (bug 06/07/2026). ocr_decimal_preciso_fb60 ya es suficiente.
-        vals = ocr_decimal_preciso_fb60(
-            img, bbox, nombre_debug=f"importe_moneda_doc_{idx}",
-        )
+        # nombre_debug=f"importe_moneda_doc_{idx}" — descomentar para recalibrar bboxes
+        vals = ocr_decimal_preciso_fb60(img, bbox)
         with lock:
             candidatos.extend(vals)
             candidatos_debug.append((idx, bbox, list(vals)))
@@ -2308,8 +2366,8 @@ def extraer_tabla_fb60_v2(img, lineas, importe_referencia=None):
         resultado["Cta.mayor"] = preferidas[0]
 
     if not resultado["Cta.mayor"]:
-        cta_txt = ocr_crop_fb60(img, (85, 820, 220, 860), modo="cuenta",
-                                 nombre_debug="cta_mayor")
+        # nombre_debug="cta_mayor" — descomentar para recalibrar bbox
+        cta_txt = ocr_crop_fb60(img, (85, 820, 220, 860), modo="cuenta")
         _log.info("[DEBUG] Cta.mayor crop OCR -> %r", cta_txt)
         m = re.search(r"\b8\d{8,11}\b", cta_txt)
         if m:
@@ -2327,8 +2385,8 @@ def extraer_tabla_fb60_v2(img, lineas, importe_referencia=None):
         resultado["Texto"] = limpiar(m.group(1)) if m else "COMISION"
 
     if not resultado["Texto"]:
-        texto_txt = ocr_crop_fb60(img, (930, 820, 1070, 860), modo="texto",
-                                   nombre_debug="texto_tabla")
+        # nombre_debug="texto_tabla" — descomentar para recalibrar bbox
+        texto_txt = ocr_crop_fb60(img, (930, 820, 1070, 860), modo="texto")
         _log.info("[DEBUG] Texto crop OCR -> %r", texto_txt)
         if texto_txt:
             resultado["Texto"] = limpiar(texto_txt)
@@ -2859,9 +2917,33 @@ if __name__ == "__main__":
     print("  [2]  ZFIEC015     — Recepción de documentos Electrónicos")
     print("  [3]  FB60 Detalle — Txt.cabec. (pestaña Detalle)")
     print("  [4]  FB60 Pago    — Vía pago (pestaña Pago)")
+    print("  [5]  Cerrar FB60  — Prueba _cerrar_fb60_forzado() (popup 'Fin tratamiento')")
     print()
 
-    modo = input("Selecciona pantalla [1/2/3/4]: ").strip()
+    modo = input("Selecciona pantalla [1/2/3/4/5]: ").strip()
+
+    if modo == "5":
+        # Al ejecutar este archivo directamente (python transactions/validacion_pantalla.py),
+        # sys.path[0] es la carpeta transactions/, no la raíz del proyecto — hay que
+        # agregar la raíz para poder importar transactions.fb60_kb (que a su vez hace
+        # `import sap_gui`, ubicado en la raíz).
+        if str(_BASE_DIR) not in sys.path:
+            sys.path.insert(0, str(_BASE_DIR))
+        from transactions.fb60_kb import _cerrar_fb60_forzado
+
+        print()
+        print("Deja FB60 abierto en pantalla, con el popup 'Fin tratamiento'")
+        print("visible (o listo para dispararse con F12).")
+        print()
+        input("Presiona Enter para probar _cerrar_fb60_forzado()...")
+        print("Haz clic en la pantalla de SAP — 2 segundos...")
+        time.sleep(2)
+
+        ok = _cerrar_fb60_forzado()
+        print()
+        print("✅ FB60 cerrado correctamente" if ok else "❌ No se pudo cerrar FB60")
+        input("Enter para salir...")
+        sys.exit(0)
 
     print()
     print("Deja SAP visible en la pantalla correcta.")

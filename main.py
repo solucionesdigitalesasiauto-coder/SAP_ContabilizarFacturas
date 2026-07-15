@@ -103,6 +103,16 @@ _TITULO_POPUP_SAP_ERR  = "SAP GUI for Windows"  # popup de error de conexión
 _TCODE_SAPLOGON_TEXT   = "SAP Logon"  # texto en título de SAP Logon
 _TCODES_MENU           = ("SESSION_MANAGER", "S000", "")  # tcodes del menú principal
 
+# ── Popup sesión múltiple — pasos Ctrl+Shift+Down (Flujo 1) ──
+# POPUP_SESION_PASOS: primer intento. El reintento usa el valor alterno (5↔6).
+_POPUP_SESION_PASOS       = int(os.getenv("POPUP_SESION_PASOS", "5"))
+_POPUP_SESION_PASOS_RETRY = 6 if _POPUP_SESION_PASOS == 5 else 5
+
+# ── Correo por lotes — enviar cada N registros en vez de esperar a que
+# termine todo el banco. 0 o vacío = deshabilitado (un solo correo al final,
+# comportamiento anterior).
+_EMAIL_BATCH_SIZE = int(os.getenv("EMAIL_BATCH_SIZE", "5"))
+
 # ── Timing (ajustar si el sistema es más lento) ──────────────
 _SLEEP_MICRO  = 0.1   # micro-pausa (caps lock, pre-state check)
 _SLEEP_CORTO  = 0.2   # entre pasos rápidos / pyautogui
@@ -149,13 +159,18 @@ def _hwnd_con_titulo(texto: str):
 
 
 
-def _manejar_popup_sesion_multiple():
+def _manejar_popup_sesion_multiple(pasos: int = 6):
     """Detecta y gestiona el popup de sesión múltiple de SAP.
 
     Selecciona "Continuar sin finalizar entradas existentes" (opción 2).
     Detecta posición del foco para elegir el flujo de navegación:
-      - Flujo 1: foco en texto superior "El usuario..." → Ctrl+Shift+Down ×6 + Enter
-      - Flujo 2: foco en opción 3 "Cancelar" (default)  → Up×1               + Enter
+      - Flujo 1: foco en texto superior "El usuario..." → Ctrl+Shift+Down ×`pasos` + Enter
+      - Flujo 2: foco en opción 3 "Cancelar" (default)  → Up×1                    + Enter
+
+    Args:
+        pasos (int): Repeticiones de Ctrl+Shift+Down en Flujo 1. Por defecto 6;
+            si un intento previo con 6 terminó cayendo en "Cancelar" (SAP cambió
+            el layout del popup), reintentar con 5.
     """
     from pynput.keyboard import Controller as _KbdCtrl, Key as _K
     hwnd = _hwnd_con_titulo(_TITULO_POPUP_LICENCIA)
@@ -191,8 +206,8 @@ def _manejar_popup_sesion_multiple():
         print(f"  Flujo 2 — Up×1 (tipo={tipo_control!r} foco={nombre_foco!r})")
         _kbd.press(_K.up); _kbd.release(_K.up)
     else:
-        print(f"  Flujo 1 — Ctrl+Shift+Down×6 + Space (tipo={tipo_control!r} foco={nombre_foco!r})")
-        for _ in range(6):
+        print(f"  Flujo 1 — Ctrl+Shift+Down×{pasos} + Space (tipo={tipo_control!r} foco={nombre_foco!r})")
+        for _ in range(pasos):
             with _kbd.pressed(_K.ctrl, _K.shift):
                 _kbd.press(_K.down); _kbd.release(_K.down)
             time.sleep(_SLEEP_MICRO)
@@ -444,13 +459,17 @@ def esperar_sesion(timeout=25) -> bool:
     return False
 
 
-def llenar_credenciales():
+def llenar_credenciales(pasos_popup: int = 6):
     """Llena las credenciales SAP (mandante, usuario, contraseña) y envía Enter.
 
     Intenta primero via SAP Scripting (más fiable, no depende de posición del cursor).
     Si no está disponible, usa teclado con campo_ctrlA.
     Maneja automáticamente el popup de sesión múltiple y el popup de "Login correcto".
     Verifica que Caps Lock esté desactivado antes de escribir la contraseña.
+
+    Args:
+        pasos_popup (int): Repeticiones de Ctrl+Shift+Down para el popup de sesión
+            múltiple (Flujo 1). Ver `_manejar_popup_sesion_multiple`.
 
     Raises:
         RuntimeError: Si las credenciales no están en .env, o si Caps Lock no se pudo desactivar.
@@ -519,7 +538,7 @@ def llenar_credenciales():
         print("  Credenciales enviadas via teclado.")
 
     time.sleep(_SLEEP_INICIO)
-    _manejar_popup_sesion_multiple()
+    _manejar_popup_sesion_multiple(pasos=pasos_popup)
     time.sleep(_SLEEP_SAP)
     try:
         SAP.activar(); SAP.enter(); time.sleep(_SLEEP_POLL)
@@ -577,7 +596,7 @@ def hacer_login():
     else:
         print("  Pantalla de login detectada — SAP ya estaba abierto.")
 
-    llenar_credenciales()
+    llenar_credenciales(pasos_popup=_POPUP_SESION_PASOS)
 
     print("  Verificando login...", end="", flush=True)
     for _ in range(_TIMEOUT_LOGIN_VERIFY):
@@ -586,6 +605,23 @@ def hacer_login():
         if not _en_pantalla_login():
             break
     print()
+
+    if _en_pantalla_login():
+        # Aún en login: probable popup de sesión múltiple mal navegado
+        # (Ctrl+Shift+Down×N no alcanzó "Continuar", o cayó en otra opción).
+        # Reintentar una vez con el valor alterno antes de asumir credenciales incorrectas.
+        _log.warning("Sigue en pantalla de login tras %d pasos — reintentando popup con %d.",
+                     _POPUP_SESION_PASOS, _POPUP_SESION_PASOS_RETRY)
+        print(f"  [!] Sigue en pantalla de login — reintentando popup con {_POPUP_SESION_PASOS_RETRY} pasos...")
+        llenar_credenciales(pasos_popup=_POPUP_SESION_PASOS_RETRY)
+        print("  Verificando login...", end="", flush=True)
+        for _ in range(_TIMEOUT_LOGIN_VERIFY):
+            time.sleep(_SLEEP_POLL)
+            print(".", end="", flush=True)
+            if not _en_pantalla_login():
+                break
+        print()
+
     if _en_pantalla_login():
         raise RuntimeError(
             "Credenciales incorrectas — verifica SAP_USUARIO y SAP_PASSWORD en el .env"
@@ -671,17 +707,50 @@ def escribir_valores_bancos_esperados(banco: dict, fecha_desde: str, fecha_hasta
         base.get("Código Tipo de Documento"),
     )
 
-def procesar_banco(banco: dict, fecha_desde: str, fecha_hasta: str, max_docs: int = None):
+def _hacer_on_batch(notif, banco: dict, nombre: str):
+    """Crea el callback on_batch que procesar_documentos invoca cada N registros.
+
+    Envía el correo con SOLO los registros nuevos del lote (no repite los ya
+    enviados). Un fallo de correo se registra como warning y NUNCA interrumpe
+    el procesamiento — mismo criterio que _notificar().
+
+    Args:
+        notif: Instancia de NotificadorSAP, o None si las notificaciones están deshabilitadas.
+        banco (dict): Configuración del banco (para _build_registros).
+        nombre (str): Nombre del banco, para el asunto/cuerpo del correo.
+
+    Returns:
+        callable | None: on_batch(procesados_nuevos, errores_nuevos), o None si notif es None.
+    """
+    if not notif:
+        return None
+
+    def on_batch(procesados_nuevos: list, errores_nuevos: list) -> None:
+        if not procesados_nuevos and not errores_nuevos:
+            return
+        _notificar(notif, nombre, procesados_nuevos, errores_nuevos,
+                   _build_registros(banco, procesados_nuevos, errores_nuevos))
+
+    return on_batch
+
+
+def procesar_banco(banco: dict, fecha_desde: str, fecha_hasta: str, max_docs: int = None, notif=None):
     """Busca documentos pendientes en ZFIEC015 y procesa cada uno en FB60.
 
     Imprime un encabezado con el nombre del banco y período,
     llama a buscar() y si hay resultados llama a procesar_documentos().
+
+    El envío de correo ocurre DENTRO de procesar_documentos, en lotes de
+    _EMAIL_BATCH_SIZE registros (incluye el lote final aunque sea parcial) —
+    el llamador (main()) ya NO envía un correo aparte al final para evitar
+    duplicar lo que el callback on_batch ya mandó.
 
     Args:
         banco (dict): Configuración del banco (nombre, cuenta_mayor_sap, etc.).
         fecha_desde (str): Fecha inicio del período en formato DD.MM.YYYY.
         fecha_hasta (str): Fecha fin del período en formato DD.MM.YYYY.
         max_docs (int | None): Máximo de documentos a procesar. None = sin límite.
+        notif: Instancia de NotificadorSAP, o None si las notificaciones están deshabilitadas.
 
     Returns:
         tuple[list, list]: (procesados, errores) de procesar_documentos().
@@ -759,7 +828,11 @@ def procesar_banco(banco: dict, fecha_desde: str, fecha_hasta: str, max_docs: in
         print("  Sin documentos pendientes.")
         return [], []
 
-    return procesar_documentos(banco, fecha_desde=fecha_desde, fecha_hasta=fecha_hasta, max_docs=max_docs)
+    return procesar_documentos(
+        banco, fecha_desde=fecha_desde, fecha_hasta=fecha_hasta, max_docs=max_docs,
+        on_batch=_hacer_on_batch(notif, banco, banco["nombre"]),
+        batch_size=_EMAIL_BATCH_SIZE,
+    )
 
 
 def _notificar(notif, banco: str, procesados: list, errores: list, registros: list) -> None:
@@ -842,7 +915,9 @@ def _build_registros(banco: dict, procesados: list, errores: list) -> list:
 
     Returns:
         list[dict]: Lista combinada con claves:
-            numero_doc, fecha, importe, cuenta_mayor, centro_costo, estado, detalle.
+            numero_doc, fecha, importe, cuenta_mayor, centro_costo, estado, detalle,
+            ocr_basico, ocr_pago, ocr_detalle (estos tres solo presentes en registros
+            CONTABILIZADO — dicts con los valores detectados por OCR en cada pestaña).
 
     Hardcoded:
         - "CONTABILIZADO", "ERROR": valores de estado (STRING)
@@ -858,6 +933,9 @@ def _build_registros(banco: dict, procesados: list, errores: list) -> list:
             "centro_costo": p.get("centro_costo", centro_costo),
             "estado":       "CONTABILIZADO",
             "detalle":      "",
+            "ocr_basico":   p.get("ocr_basico", {}),
+            "ocr_pago":     p.get("ocr_pago", {}),
+            "ocr_detalle":  p.get("ocr_detalle", {}),
         }
         for p in procesados
     ] + [
@@ -1019,11 +1097,12 @@ def main():
             _log.info("=== Inicio %s %s-%s === (intento %d/%d)",
                       nombre, fecha_desde, fecha_hasta, intento, _MAX_INTENTOS_BANCO)
             try:
-                procesados, errores = procesar_banco(banco, fecha_desde, fecha_hasta, max_docs=max_docs)
+                # El correo se envía dentro de procesar_banco/procesar_documentos,
+                # en lotes de _EMAIL_BATCH_SIZE (incluye el lote final) — no se
+                # repite aquí para no duplicar lo ya enviado.
+                procesados, errores = procesar_banco(banco, fecha_desde, fecha_hasta, max_docs=max_docs, notif=notif)
                 resultados.append({"banco": nombre, "procesados": procesados, "errores": errores})
                 _log.info("%s: procesados=%d errores=%d", nombre, len(procesados), len(errores))
-                _notificar(notif, nombre, procesados, errores,
-                           _build_registros(banco, procesados, errores))
                 break   # éxito → siguiente banco
             except Exception as e:
                 msg = str(e)

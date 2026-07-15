@@ -5,6 +5,12 @@ correos/.env.privado
 # Logs
 *.log
 
+# Estado/depuración generados en tiempo de ejecución
+debug_*.png
+valores_bancos.json
+valores_fb60.json
+valores_zfiec015_detectados.json
+
 # Build / distribución
 release/dist/
 release/build/

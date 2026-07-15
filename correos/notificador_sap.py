@@ -46,7 +46,6 @@ _COLOR_OMITIDO_FG       = "#888"
 _COLOR_OMITIDO_BG       = "#f5f5f5"
 
 # ── Límite de caracteres en columna Detalle ───────────────────
-_MAX_DETALLE = 80   # caracteres máximos mostrados en columna Detalle del correo
 
 
 class NotificadorSAP:
@@ -86,9 +85,11 @@ class NotificadorSAP:
                 - centro_costo (str): Centro de costo asignado.
                 - estado (str): "CONTABILIZADO" | "ERROR" | "OMITIDO".
                 - detalle (str): Mensaje de error o detalle adicional.
+                - ocr_basico (dict, opcional): Valores OCR de Datos básicos.
+                - ocr_pago (dict, opcional): Valores OCR de pestaña Pago.
+                - ocr_detalle (dict, opcional): Valores OCR de pestaña Detalle.
 
         Hardcoded:
-            - _MAX_DETALLE = 80: máximo de chars en columna Detalle (CONFIG)
             - "CONTABILIZADO", "ERROR", "OMITIDO": valores de estado válidos (STRING)
             - _COLOR_*: colores de badges por estado (ESTILO)
             - CSS inline de la tabla: estilos de presentación (ESTILO)
@@ -140,6 +141,38 @@ class NotificadorSAP:
                 f"border-radius:4px;font-size:11px;font-weight:bold'>{estado}</span>"
             )
 
+        def _fmt_ocr(r: dict) -> str:
+            """Combina ocr_basico / ocr_pago / ocr_detalle en HTML para la tabla.
+
+            Sin truncar — antes se cortaba a _MAX_OCR (160 chars), insuficiente
+            para los 11 campos de "Básico" (confirmado 14/07/2026, el correo
+            mostraba solo un puñado de campos seguidos de "…"). Cada sección
+            en su propia línea (<br>) para que sea legible en la celda.
+
+            Args:
+                r (dict): Registro individual, puede no tener las claves ocr_*.
+
+            Returns:
+                str: "<b>Básico:</b> k=v, ...<br><b>Pago:</b> k=v<br><b>Detalle:</b> k=v"
+            """
+            secciones = []
+            for etiqueta, clave in (("Básico", "ocr_basico"), ("Pago", "ocr_pago"), ("Detalle", "ocr_detalle")):
+                datos = r.get(clave) or {}
+                if datos:
+                    pares = ", ".join(f"{k}={v}" for k, v in datos.items())
+                    secciones.append(f"<b>{etiqueta}:</b> {pares}")
+            return "<br>".join(secciones)
+
+        def _fmt_detalle(r: dict) -> str:
+            """Formatea 'detalle' preservando saltos de línea, sin truncar.
+
+            Antes se cortaba a 80 chars (_MAX_DETALLE) — insuficiente para el
+            mensaje multi-línea de ValidacionFB60Error (confirmado 15/07/2026,
+            el correo mostraba solo "Validación FB60 fallida:" seguido de "…").
+            Mismo criterio aplicado a _fmt_ocr el 14/07/2026.
+            """
+            return str(r.get("detalle", "")).replace("\n", "<br>")
+
         filas = "".join(
             f"<tr style='border-bottom:1px solid #f0f0f0;'>"
             f"<td style='padding:8px 12px;font-family:monospace;font-size:13px;color:#333;'>{r.get('numero_doc', '—')}</td>"
@@ -148,9 +181,8 @@ class NotificadorSAP:
             f"<td style='padding:8px 12px;font-family:monospace;font-size:12px;color:#666;'>{r.get('cuenta_mayor', '')}</td>"
             f"<td style='padding:8px 12px;font-family:monospace;font-size:12px;color:#666;'>{r.get('centro_costo', '')}</td>"
             f"<td style='padding:8px 12px;'>{_badge(r.get('estado', ''))}</td>"
-            f"<td style='padding:8px 12px;font-size:11px;color:#999;'>"
-            f"{str(r.get('detalle', ''))[:_MAX_DETALLE]}"
-            f"{'…' if len(str(r.get('detalle', ''))) > _MAX_DETALLE else ''}</td>"
+            f"<td style='padding:8px 12px;font-size:11px;color:#999;'>{_fmt_detalle(r)}</td>"
+            f"<td style='padding:8px 12px;font-size:10px;color:#888;font-family:monospace;'>{_fmt_ocr(r)}</td>"
             f"</tr>"
             for r in registros
         )
@@ -170,6 +202,7 @@ class NotificadorSAP:
               <th style="padding:9px 12px;text-align:left;color:#555;font-size:12px;">C. Costo</th>
               <th style="padding:9px 12px;text-align:left;color:#555;font-size:12px;">Estado</th>
               <th style="padding:9px 12px;text-align:left;color:#555;font-size:12px;">Detalle</th>
+              <th style="padding:9px 12px;text-align:left;color:#555;font-size:12px;">Validación OCR</th>
             </tr>
           </thead>
           <tbody>{filas}</tbody>

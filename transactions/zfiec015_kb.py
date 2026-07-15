@@ -325,7 +325,39 @@ def _llenar_form_teclado(sociedad, proveedor, fecha_desde, fecha_hasta, tipo_doc
 # ── PASO 2: Procesar filas de la grilla ──────────────────────
 
 
-def procesar_documentos(banco: dict, max_docs: int = None, **_):
+def _esta_en_pantalla_busqueda_zfiec() -> bool:
+    """Detecta si SAP quedó en la pantalla de BÚSQUEDA de ZFIEC015 (campos
+    Sociedad/Proveedor/Fecha) en vez de la GRILLA de resultados.
+
+    Ambas comparten el mismo título de ventana ("Recepción de documentos
+    Electrónicos") — no se distinguen por título, solo por contenido de
+    pantalla. Confirmado en producción 15/07/2026: tras un cierre forzado
+    de FB60 (_cerrar_fb60_forzado) SAP retrocedió un nivel de más y dejó la
+    pantalla de búsqueda; el caller lo interpretó como "grilla vacía" y
+    cortó el procesamiento del banco sin reintentar.
+
+    Reutiliza leer_valores_zfiec015() (ya calibrado para la pantalla de
+    búsqueda) — si detecta el campo Proveedor, estamos ahí y no en la grilla.
+
+    Returns:
+        bool: True si se detectó la pantalla de búsqueda. False también
+            ante cualquier falla de OCR (Tesseract ausente, etc.) — criterio
+            conservador: no bloquear el flujo existente por esta verificación.
+    """
+    try:
+        from transactions.validacion_pantalla import leer_valores_zfiec015
+        detectados = leer_valores_zfiec015()
+    except Exception as exc:
+        _log.debug("No se pudo verificar pantalla de búsqueda ZFIEC015: %s", exc)
+        return False
+    proveedor = detectados.get("Proveedor")
+    if proveedor:
+        _log.warning("Pantalla de búsqueda ZFIEC015 detectada (Proveedor OCR=%r) — no es la grilla", proveedor)
+        return True
+    return False
+
+
+def procesar_documentos(banco: dict, max_docs: int = None, on_batch=None, batch_size: int = 0, **_):
     """Abre FB60 desde la grilla e itera todos los documentos pendientes.
 
     Tras cada contabilización SAP regresa a ZFIEC015 con la grilla refrescada
@@ -335,6 +367,15 @@ def procesar_documentos(banco: dict, max_docs: int = None, **_):
     Args:
         banco (dict): Configuración del banco.
         max_docs (int | None): Máximo de documentos a procesar. None = sin límite.
+        on_batch (callable | None): on_batch(procesados_nuevos, errores_nuevos) —
+            se invoca cada vez que se acumulan `batch_size` registros nuevos
+            (y una vez más al final con lo que quede, aunque sea parcial).
+            Un fallo de on_batch (ej. correo caído) se registra como warning
+            y NUNCA interrumpe este loop de procesamiento SAP.
+        batch_size (int): Umbral de registros nuevos para invocar on_batch.
+            <= 0 deshabilita el envío intermedio — solo se invoca una vez al
+            final con todo lo procesado (comportamiento equivalente al de un
+            único correo de resumen).
         **_: Absorbe kwargs no usados (fecha_desde, fecha_hasta).
 
     Returns:
@@ -343,6 +384,24 @@ def procesar_documentos(banco: dict, max_docs: int = None, **_):
     from transactions.fb60_kb import registrar_factura, ValidacionFB60Error
     procesados = []
     errores    = []
+    _rep = {"proc": 0, "err": 0}   # índices ya reportados a on_batch
+
+    def _flush_batch(forzar: bool = False) -> None:
+        if not on_batch:
+            return
+        nuevos_proc = procesados[_rep["proc"]:]
+        nuevos_err  = errores[_rep["err"]:]
+        pendientes  = len(nuevos_proc) + len(nuevos_err)
+        if pendientes == 0:
+            return
+        if not forzar and (batch_size <= 0 or pendientes < batch_size):
+            return
+        try:
+            on_batch(nuevos_proc, nuevos_err)
+        except Exception as e:
+            _log.warning("on_batch (correo por lotes) falló — continúa el procesamiento: %s", e)
+        _rep["proc"] = len(procesados)
+        _rep["err"]  = len(errores)
 
     if not _abrir_fb60_teclado(0):
         _log.info("Primer intento FB60 falló — reintentando en 2s...")
@@ -350,6 +409,11 @@ def procesar_documentos(banco: dict, max_docs: int = None, **_):
         if not _abrir_fb60_teclado(0):
             pantalla = SAP.titulo_actual()
             if "recepci" in pantalla.lower():
+                if _esta_en_pantalla_busqueda_zfiec():
+                    raise RuntimeError(
+                        "SAP quedó en la pantalla de búsqueda ZFIEC015 en vez de la "
+                        "grilla de resultados — reintentando banco."
+                    )
                 _log.info("Grilla vacía — sin documentos pendientes para este banco.")
                 return procesados, errores
             _log.warning("FB60 no se abrió tras dos intentos. Pantalla: %r", pantalla)
@@ -367,10 +431,12 @@ def procesar_documentos(banco: dict, max_docs: int = None, **_):
             procesados.append(resultado)
             print(f"    ✓ Doc {n}: {resultado['sap_doc']}")
             _log.info("Procesado doc_%d → %s", n, resultado['sap_doc'])
+            _flush_batch()
         except ValidacionFB60Error as e:
             _log.warning("Validación FB60 fallida doc_%d — saltando al siguiente: %s", n, e)
             print(f"    ↺ doc_{n}: validación OCR fallida — siguiente documento")
             errores.append({"doc": f"doc_{n}", "error": str(e)})
+            _flush_batch()
             time.sleep(_SLEEP_CARGA)
             # Verificar que FB60 cerró; si sigue abierto forzar cierre antes de volver al grid
             if _TITULO_FB60.lower() in SAP.titulo_actual().lower():
@@ -380,6 +446,12 @@ def procesar_documentos(banco: dict, max_docs: int = None, **_):
                 _cerrar_fb60_forzado()
                 time.sleep(_SLEEP_CARGA)
             if not _abrir_fb60_teclado(0):
+                if _esta_en_pantalla_busqueda_zfiec():
+                    raise RuntimeError(
+                        f"SAP quedó en la pantalla de búsqueda ZFIEC015 tras cerrar "
+                        f"FB60 (doc_{n} con validación fallida) en vez de la grilla — "
+                        "reintentando banco."
+                    )
                 break
             continue
         except Exception as e:
@@ -402,10 +474,16 @@ def procesar_documentos(banco: dict, max_docs: int = None, **_):
 
         # SAP regresó a ZFIEC015 — misma secuencia que primera fila
         if not _abrir_fb60_teclado(0):
+            if _esta_en_pantalla_busqueda_zfiec():
+                raise RuntimeError(
+                    f"SAP quedó en la pantalla de búsqueda ZFIEC015 tras doc_{n} en "
+                    "vez de la grilla — reintentando banco."
+                )
             _log.info("Sin más documentos en grilla tras doc_%d.", n)
             break
         time.sleep(_SLEEP_ENTRE_DOCS)
 
+    _flush_batch(forzar=True)
     return procesados, errores
 
 def _abrir_fb60_scripting(session, fila_idx: int) -> bool:
