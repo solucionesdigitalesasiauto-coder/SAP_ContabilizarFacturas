@@ -2215,8 +2215,18 @@ def extraer_calc_impuestos_fb60_v2(img, lineas):
             yi0, yi1 = y0 + iy, y1b - iy
             xi0, xi1 = x0 + ix, x1b - ix
             if yi1 <= yi0 or xi1 <= xi0:
-                azules, total = 0, 1
-                interior_img = crop_img
+                # Bbox de azules demasiado chico para el margen 6px/30% sin
+                # vaciarse por completo — confirmado 17/07/2026: un checkmark
+                # real de ~10x11px quedaba en 0 tras el margen, aunque el
+                # tilde SÍ estaba presente (mapa de píxeles confirmó forma de
+                # check). En vez de asumir "vacío", se cuenta directo sobre
+                # el bbox de azules ya detectado (sin trimming) — un
+                # checkmark real llena buena parte de su propio bbox
+                # (ratio 0.35 visto en producción; umbral sigue en 0.08).
+                interior_mask = mask_full[y0:y1b + 1, x0:x1b + 1]
+                azules = int(interior_mask.sum())
+                total = int(interior_mask.size)
+                interior_img = crop_img.crop((x0, y0, x1b + 1, y1b + 1))
             else:
                 interior_mask = mask_full[yi0:yi1, xi0:xi1]
                 azules = int(interior_mask.sum())

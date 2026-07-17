@@ -121,7 +121,7 @@ def main():
         os.remove(zip_path)
 
     # ── 1. Compilar ───────────────────────────────────────────
-    _paso(1, 4, "Compilando con PyInstaller")
+    _paso(1, 5, "Compilando con PyInstaller")
     result = subprocess.run(
         [sys.executable, "-m", "PyInstaller", spec_path,
          "--clean",
@@ -136,7 +136,7 @@ def main():
     _ok(f"{_EXE_NAME}  ({os.path.getsize(exe_path) // 1024 // 1024} MB)")
 
     # ── 2. Firmar exe ─────────────────────────────────────────
-    _paso(2, 4, "Firmando exe (SmartScreen)")
+    _paso(2, 5, "Firmando exe (SmartScreen)")
     signtool = _encontrar_signtool()
     if not signtool:
         print("        [!] signtool.exe no encontrado — exe sin firmar")
@@ -155,7 +155,7 @@ def main():
             print(f"        [!] Error al firmar:\n{r.stdout}{r.stderr}")
 
     # ── 3. Armar carpeta de entrega ───────────────────────────
-    _paso(3, 4, "Armando carpeta de entrega")
+    _paso(3, 5, "Armando carpeta de entrega")
     os.makedirs(release_dir)
 
     shutil.copy2(exe_path, release_dir)
@@ -176,25 +176,47 @@ def main():
     else:
         print("        [!] Certificado .cer no encontrado — el cliente deberá instalarlo manualmente")
 
-    if not os.path.exists(_TESS_DIR):
-        _error(f"Tesseract-OCR no encontrado en {_TESS_DIR} — no se puede armar el respaldo portable.")
-    shutil.copytree(_TESS_DIR, os.path.join(release_dir, "Tesseract-OCR"))
-    _ok("Tesseract-OCR copiado (respaldo portable, por si el exe no lo extrae)")
-
     _ok("Carpeta de entrega lista")
 
-    # ── 4. Crear ZIP ──────────────────────────────────────────
-    _paso(4, 4, "Creando ZIP")
+    # ── 4. Armar Tesseract-OCR aparte (instalador operativo, ZIP propio) ──
+    # Se valida primero si Tesseract-OCR_instalador.zip ya existe de un build
+    # anterior — el contenido de Tesseract no cambia entre versiones de
+    # ComBancos, así que no vale la pena recopiar/recomprimir ~200MB cada vez.
+    _paso(4, 5, "Verificando Tesseract-OCR")
+    tess_zip_path = os.path.join(_BUILD_ROOT, "Tesseract-OCR_instalador.zip")
+    if os.path.exists(tess_zip_path):
+        _ok(f"Tesseract-OCR_instalador.zip ya existe — no se vuelve a generar "
+            f"({os.path.getsize(tess_zip_path) // 1024 // 1024} MB)")
+    else:
+        if not os.path.exists(_TESS_DIR):
+            _error(f"Tesseract-OCR no encontrado en {_TESS_DIR} — no se puede armar el instalador.")
+        tess_dir = os.path.join(_BUILD_ROOT, "Tesseract-OCR")
+        if os.path.exists(tess_dir):
+            shutil.rmtree(tess_dir)
+        shutil.copytree(_TESS_DIR, tess_dir)
+        _ok("Tesseract-OCR copiado")
+        with zipfile.ZipFile(tess_zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for root, _, files in os.walk(tess_dir):
+                for f in files:
+                    full = os.path.join(root, f)
+                    arc  = os.path.join("Tesseract-OCR", os.path.relpath(full, tess_dir))
+                    zf.write(full, arc)
+        _ok(f"Tesseract-OCR_instalador.zip creado ({os.path.getsize(tess_zip_path) // 1024 // 1024} MB)")
+
+    # ── 5. Crear ZIP del proyecto ────────────────────────────
+    _paso(5, 5, "Creando ZIP del proyecto")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for root, _, files in os.walk(release_dir):
             for f in files:
                 full = os.path.join(root, f)
                 arc  = os.path.relpath(full, release_dir)
                 zf.write(full, arc)
-    _ok(f"{os.path.getsize(zip_path) // 1024 // 1024} MB")
+    _ok(f"{nombre}.zip  ({os.path.getsize(zip_path) // 1024 // 1024} MB)")
 
     print("\n" + "=" * 56)
-    print(f"  LISTO: {nombre}.zip")
+    print(f"  LISTO:")
+    print(f"    {nombre}.zip")
+    print(f"    Tesseract-OCR_instalador.zip")
     print("=" * 56)
     os.startfile(_BUILD_ROOT)
 

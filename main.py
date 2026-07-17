@@ -214,6 +214,26 @@ def _manejar_popup_sesion_multiple(pasos: int = 6):
         time.sleep(_SLEEP_CORTO)
         _kbd.press(_K.space); _kbd.release(_K.space)  # activa el radio button
 
+        # Verificar que el radio activado NO sea "Cancelar" antes de confirmar con
+        # Enter — confirmado en producción 15/07/2026: un conteo de pasos
+        # desalineado puede aterrizar en "Cancelar", y Enter ahí CIERRA SAP por
+        # completo (la ventana desaparece y el siguiente activar() revienta con
+        # "Ventana SAP no encontrada"). Si se detecta, Escape en vez de Enter —
+        # deja el popup sin resolver, que es el estado que el caller ya reintenta
+        # con el paso alterno (5↔6), en vez del crash irreversible.
+        try:
+            from pywinauto import Desktop as _Desktop
+            foco2   = _Desktop(backend="uia").get_focus()
+            nombre2 = (foco2.element_info.name or "").lower()
+            if "cancel" in nombre2:
+                _log.warning("Flujo 1 (pasos=%d) aterrizó en 'Cancelar' — Escape en vez de Enter", pasos)
+                print(f"  [!] Flujo 1 aterrizó en 'Cancelar' (pasos={pasos}) — Escape en vez de Enter")
+                _kbd.press(_K.esc); _kbd.release(_K.esc)
+                time.sleep(_SLEEP_SAP)
+                return
+        except Exception as _e:
+            _log.debug("No se pudo verificar radio seleccionado antes de Enter: %s", _e)
+
     time.sleep(_SLEEP_LARGO)
     _kbd.press(_K.enter); _kbd.release(_K.enter)
     time.sleep(_SLEEP_SAP)

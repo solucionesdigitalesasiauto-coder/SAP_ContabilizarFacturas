@@ -36,11 +36,13 @@ _TIMEOUT_BTN_EXISTS     = 0.3   # timeout exists() del botón Sí
 _TITULO_ZFIEC         = "Recepcion de documentos Electronicos"   # sin tilde (esperar_titulo)
 _TITULO_ZFIEC_ES      = "Recepción de documentos Electrónicos"   # con tilde (activar)
 _TITULO_FB60          = "Registrar factura"
+_TITULO_EASY_ACCESS   = "SAP Easy Access"                        # pantalla de origen esperada
 _GRID_SAP_ID          = "wnd[0]/usr/cntlGRID1/shellcont/shell"
 _COL_FB60             = "FB60"                                   # columna de botón en grilla
 _TIMEOUT_ZFIEC        = 15   # segundos esperando pantalla ZFIEC015
 _TIMEOUT_FB60         = 5    # segundos esperando apertura de FB60
 _MAX_INTENTOS_POPUP   = 2    # reintentos Enter para popup HTML de ZFIEC015
+_MAX_INTENTOS_EASY_ACCESS = 2   # reintentos de "/n" para forzar retorno a SAP Easy Access
 
 # campos.py contiene los IDs de elementos SAP para scripting (opcional)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "diagnostico"))
@@ -167,6 +169,29 @@ def buscar(proveedor: str, fecha_desde: str, fecha_hasta: str,
     """
     sociedad = sociedad or os.getenv("SAP_SOCIEDAD", "")
     tipo_doc = tipo_doc or os.getenv("TIPO_DOC_ZFIEC", "")
+
+    origen = SAP.titulo_actual()
+    if (_TITULO_EASY_ACCESS.lower() not in origen.lower()
+            and _TITULO_ZFIEC.lower() not in origen.lower()):
+        _log.warning("Pantalla de origen inesperada antes de ir a ZFIEC015: %r", origen)
+        # TODO: revertir este bloque si el retorno forzado a Easy Access causa problemas
+        for _intento in range(_MAX_INTENTOS_EASY_ACCESS):
+            try:
+                SAP.ir_a("/n")
+                time.sleep(_SLEEP_MEDIO)
+                origen = SAP.titulo_actual()
+                _log.info("[BETA][RETORNO-EASY-ACCESS] Intento %d — pantalla: %r",
+                          _intento + 1, origen)
+            except Exception as exc:
+                _log.warning("[BETA][RETORNO-EASY-ACCESS] Fallo al forzar retorno: %s", exc)
+                break
+            if (_TITULO_EASY_ACCESS.lower() in origen.lower()
+                    or _TITULO_ZFIEC.lower() in origen.lower()):
+                break
+        else:
+            _log.warning("[BETA][RETORNO-EASY-ACCESS] No se logro volver a pantalla "
+                         "esperada tras %d intentos — se continua igual",
+                         _MAX_INTENTOS_EASY_ACCESS)
 
     SAP.ir_a(os.getenv("TCODE_ZFIEC015", "ZFIEC015"))
     SAP.esperar_titulo(_TITULO_ZFIEC, timeout=_TIMEOUT_ZFIEC)
