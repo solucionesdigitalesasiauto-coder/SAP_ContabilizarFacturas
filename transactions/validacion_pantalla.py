@@ -1901,10 +1901,9 @@ def ocr_decimal_preciso_fb60(img, bbox, nombre_debug=None,
     OCR especializado para importes.
 
     [M2] El original ejecutaba SIEMPRE 4 variantes x 3 configs = 12
-    llamadas a Tesseract por bbox. Ahora:
-      - variantes perezosas con salida temprana por confianza;
-      - si se pasa `valor_referencia`, corta apenas una lectura
-        coincide con la cabecera (criterio de aceptación original).
+    llamadas a Tesseract por bbox. Ahora: variantes perezosas, cortando
+    en cuanto 2 lecturas coinciden entre sí (consenso, no confianza
+    aislada — ver TODO más abajo, 22/07/2026).
     Devuelve lista de valores normalizados (interfaz original).
     """
     crop = _recortar(img, escalar_bbox_fb60(img, bbox))
@@ -1931,35 +1930,25 @@ def ocr_decimal_preciso_fb60(img, bbox, nombre_debug=None,
         "--oem 3 --psm 7 -c tessedit_char_whitelist=0123456789.,Oo",
     ]
 
-    def _valida(txt):
-        v = normalizar_decimal(txt)
-        if not v:
-            return False
-        if valor_referencia is not None:
-            return importes_iguales(v, valor_referencia)
-        return True
-
     resultados = []
-    conf_min = CONFIG.get("conf_min_campo", 55)
     max_var = 1 + CONFIG.get("max_reintentos_crop", 3)
 
     for n_var, variante in enumerate(variantes_reintento(crop)):
         if n_var >= max_var:
             break
         for cfg in configs:
-            txt, conf = ocr_tesseract_conf(variante, lang="eng", config=cfg)
+            txt, _conf = ocr_tesseract_conf(variante, lang="eng", config=cfg)
             valor = normalizar_decimal(txt) if txt else None
             if valor:
                 resultados.append(valor)
-                # La variante 0 (sin escalar) es la más confiable para dígitos
-                # finos (confirmado 06/07/2026: Tesseract reporta confianza
-                # baja/0 para lecturas CORRECTAS ahí, y alta para lecturas
-                # erróneas a mayor escala) — se acepta directo sin exigir
-                # el umbral de confianza, que es engañoso en este caso.
-                if CONFIG.get("salida_temprana", True) and _valida(txt) and (
-                    conf >= conf_min or n_var == 0
-                ):
-                    return resultados
+                # TODO: fix — se quitó el retorno inmediato de una sola lectura
+                # confiada (conf>=conf_min o n_var==0): confirmado 22/07/2026
+                # que la variante 0 (sin escalar) puede leer mal con confianza
+                # ALTA (ej. '20.96' con conf=64 en vez de '20.90' real, que las
+                # variantes escaladas 1-4 leían bien con conf 87-95). Ahora se
+                # exige el consenso de 2 lecturas iguales (chequeo de abajo)
+                # antes de confiar en cualquier resultado — mismo criterio que
+                # ya usa ocr_con_confianza() para el resto de los campos.
         # tras la primera variante, si ya hay >=2 lecturas idénticas, cortar
         if CONFIG.get("salida_temprana", True) and len(resultados) >= 2:
             if resultados.count(resultados[-1]) >= 2:
