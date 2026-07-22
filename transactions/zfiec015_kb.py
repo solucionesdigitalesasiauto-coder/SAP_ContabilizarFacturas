@@ -107,9 +107,6 @@ def _validar_campos_zfiec(proveedor, fecha_desde, fecha_hasta, sociedad, tipo_do
     Raises:
         RuntimeError: Si algún campo detectado por OCR no coincide con el esperado.
     """
-    if os.getenv("VALIDAR_OCR", "true").strip().lower() in ("false", "0", "no"):
-        _log.info("Validación ZFIEC015 omitida — VALIDAR_OCR=false")
-        return
     import json, pathlib
     _base = pathlib.Path(sys.executable).parent if getattr(sys, 'frozen', False) \
             else pathlib.Path(__file__).parent.parent

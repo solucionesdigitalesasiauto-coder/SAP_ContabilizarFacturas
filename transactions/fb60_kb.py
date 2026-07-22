@@ -17,7 +17,7 @@ class ValidacionFB60Error(RuntimeError):
 _TAB_FECHA_FACTURA  = 2   # desde Acreedor
 _TAB_FECHA_CONTAB   = 2   # desde Fecha Factura
 _TAB_CALC_IMP       = 5   # desde Acreedor (total acumulado)
-_TAB_IND_IMP        = 5   # foco inmediato tras marcar checkbox
+_TAB_IND_IMP        = 0   # foco inmediato tras marcar checkbox
 _TAB_POS_IMPORTE    = 2   # dentro de la tabla de posiciones
 _TAB_POS_TEXTO      = 6
 _TAB_POS_CCOSTO     = 5
@@ -366,11 +366,6 @@ def _cerrar_fb60_forzado(max_intentos: int = 5) -> bool:
     return False
 
 
-def _ocr_habilitado() -> bool:
-    """Lee VALIDAR_OCR del .env — true (default) valida, false omite toda validación OCR."""
-    return os.getenv("VALIDAR_OCR", "true").strip().lower() not in ("false", "0", "no")
-
-
 def _validar_basico_OCR_fb60() -> dict:
     """Valida por OCR los campos de Datos básicos FB60 antes de cambiar de pestaña.
 
@@ -382,9 +377,6 @@ def _validar_basico_OCR_fb60() -> dict:
     Returns:
         dict: Valores detectados por OCR (para incluir en el correo de resumen).
     """
-    if not _ocr_habilitado():
-        _log.info("Validación OCR FB60 omitida — VALIDAR_OCR=false")
-        return {}
     try:
         from transactions.validacion_pantalla import leer_y_validar_fb60
     except (ImportError, Exception) as exc:
@@ -412,9 +404,6 @@ def _validar_pantalla_detalle_fb60() -> dict:
     Returns:
         dict: Valores detectados por OCR (para incluir en el correo de resumen).
     """
-    if not _ocr_habilitado():
-        _log.info("Validación OCR FB60 Detalle omitida — VALIDAR_OCR=false")
-        return {}
     try:
         from transactions.validacion_pantalla import leer_y_validar_fb60_detalle
     except (ImportError, Exception) as exc:
@@ -736,9 +725,6 @@ def _validar_pantalla_pago_fb60() -> dict:
     Returns:
         dict: Valores detectados por OCR (para incluir en el correo de resumen).
     """
-    if not _ocr_habilitado():
-        _log.info("Validación OCR FB60 Pago omitida — VALIDAR_OCR=false")
-        return {}
     try:
         from transactions.validacion_pantalla import leer_y_validar_fb60_pago
     except (ImportError, Exception) as exc:
