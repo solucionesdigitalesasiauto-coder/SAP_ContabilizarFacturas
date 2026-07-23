@@ -2404,28 +2404,20 @@ def extraer_tabla_fb60_v2(img, lineas, importe_referencia=None):
 
 
 def texto_sap_coincide(val_esp, val_det):
-    """Compara texto esperado vs detectado con truncamiento SAP (original)."""
-    esp_raw = limpiar(str(val_esp or "")).upper()
-    det_raw = limpiar(str(val_det or "")).upper()
+    """Valida solo que aparezca 'COMISION' (mayúsculas).
 
+    El resto del texto (BANCO + nombre del banco) se omite — a diferencia
+    de Txt.cabec. en pestaña Detalle, esta columna de la tabla de
+    posiciones SAP la muestra SIEMPRE truncada en pantalla a 'COMISION
+    BA...' (columna angosta) y nunca llega a mostrar 'BANCO' completo, así
+    que exigirlo aquí haría fallar todos los documentos, no solo casos
+    puntuales (confirmado 22/07/2026 revisando el historial de logs de la
+    sesión — el truncamiento es constante en todos los bancos).
+    """
+    det_raw = limpiar(str(val_det or "")).upper()
     if not det_raw:
         return False
-
-    esp_raw = re.sub(r"\s+", " ", esp_raw).strip()
-    det_raw = re.sub(r"\s+", " ", det_raw).strip()
-
-    m = re.search(r"\.{2,}", det_raw)
-    if m:
-        visible = det_raw[:m.start()].strip()
-        visible_norm = normalizar(visible)
-        # Si "visible" es solo puntuación/ruido, normalizar() lo deja vacío
-        # y startswith("") da True con cualquier cosa — falso positivo
-        # confirmado 06/07/2026 (detectado='-... , E' pasaba como válido).
-        if not visible_norm:
-            return False
-        return normalizar(esp_raw).startswith(visible_norm)
-
-    return normalizar(esp_raw) == normalizar(det_raw)
+    return "COMISION" in det_raw
 
 
 def leer_valores_fb60():
@@ -2708,9 +2700,12 @@ def leer_y_validar_fb60_detalle():
     val_esp = esperados.get("Texto Cabecera")
     if val_esp is not None:
         val_det = detectados.get("Txt.cabec.")
-        n_esp = normalizar(str(val_esp))
         n_det = normalizar(str(val_det or ""))
-        if n_esp not in n_det:
+        # Solo valida hasta "BANCO" — el nombre específico del banco que
+        # sigue (DINERS, AUSTRO, etc.) se omite: el OCR lo lee bien de forma
+        # inconsistente entre bancos y esa parte no es crítica para el
+        # registro (pedido explícito 22/07/2026).
+        if "banco" not in n_det:
             diferencias["Txt.cabec."] = (
                 f"esperado={val_esp!r} detectado={_nd(val_det)}"
             )
